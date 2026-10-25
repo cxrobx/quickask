@@ -1,0 +1,9 @@
+{"type":"thread.started","thread_id":"01a16180-9534-7c00-8973-dc871c0491ee"}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"I’ll run those commands in order.\n"}}
+{"type":"item.started","item":{"id":"item_1","type":"command_execution","command":"/bin/zsh -lc 'ls /tmp | head -3'","aggregated_output":"","exit_code":null,"status":"in_progress"}}
+{"type":"item.completed","item":{"id":"item_1","type":"command_execution","command":"/bin/zsh -lc 'ls /tmp | head -3'","aggregated_output":"scratch\nlockfile\n__KMP_REGISTERED_LIB_12006\n","exit_code":0,"status":"completed"}}
+{"type":"item.started","item":{"id":"item_2","type":"command_execution","command":"/bin/zsh -lc false","aggregated_output":"","exit_code":null,"status":"in_progress"}}
+{"type":"item.completed","item":{"id":"item_2","type":"command_execution","command":"/bin/zsh -lc false","aggregated_output":"","exit_code":1,"status":"failed"}}
+{"type":"item.completed","item":{"id":"item_3","type":"agent_message","text":"done"}}
+{"type":"turn.completed","usage":{"input_tokens":38357,"cached_input_tokens":31232,"cache_write_input_tokens":0,"output_tokens":70,"reasoning_output_tokens":0}}

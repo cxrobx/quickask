@@ -1,0 +1,129 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Recent chats status</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --red: #e5736b;
+    --blue: #7aa7e8;
+    --green: #c2e3c9; /* QuickAsk accent */
+  }
+  * { box-sizing: border-box; margin: 0; }
+  body {
+    background: linear-gradient(135deg, #3a3631, #26282a 60%, #2f2b29);
+    font-family: "JetBrains Mono", monospace;
+    color: rgba(255,255,255,.92);
+    padding: 28px;
+    min-height: 100vh;
+  }
+  .cols { display: flex; gap: 28px; align-items: flex-start; flex-wrap: wrap; }
+  .col h2 { font-size: 12px; font-weight: 500; color: rgba(255,255,255,.55); margin-bottom: 4px; }
+  .col p.note { font-size: 10.5px; color: rgba(255,255,255,.4); width: 300px; margin-bottom: 10px; line-height: 1.45; }
+  .pop {
+    width: 300px; padding: 6px; border-radius: 14px;
+    background: rgba(70,68,64,.72); backdrop-filter: blur(20px);
+    box-shadow: 0 0 0 1px rgba(255,255,255,.08), 0 18px 40px rgba(0,0,0,.45);
+  }
+  .hdr { font-size: 10px; font-weight: 500; color: rgba(255,255,255,.4); padding: 4px 12px 2px; }
+  .row { display: flex; gap: 9px; align-items: flex-start; padding: 7px 12px; border-radius: 10px; }
+  .row.hover { background: rgba(255,255,255,.10); }
+  .dot { width: 7px; height: 7px; border-radius: 50%; flex: none; margin-top: 5px; }
+  .dot.none { background: transparent; }
+  .dot.red { background: var(--red); box-shadow: 0 0 6px rgba(229,115,107,.55); }
+  .dot.blue { background: var(--blue); }
+  .dot.ring { background: transparent; box-shadow: inset 0 0 0 1.5px var(--blue); }
+  .dot.work { background: var(--green); animation: pulse 1.2s ease-in-out infinite; }
+  @keyframes pulse { 50% { opacity: .25; } }
+  .txt { min-width: 0; flex: 1; }
+  .t { font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .s { font-size: 10px; color: rgba(255,255,255,.45); margin-top: 1px; }
+  .s b { font-weight: 500; }
+  .s .red { color: var(--red); } .s .blue { color: var(--blue); } .s .work { color: var(--green); }
+  .row.idle .t { color: rgba(255,255,255,.6); }
+  .group { font-size: 9.5px; color: rgba(255,255,255,.32); padding: 8px 12px 2px; letter-spacing: .02em; }
+  .menu { margin: 4px 12px 2px 28px; padding: 4px; border-radius: 9px; background: rgba(40,40,40,.92);
+          box-shadow: 0 0 0 1px rgba(255,255,255,.08); font-size: 11px; }
+  .menu div { padding: 5px 9px; border-radius: 6px; }
+  .menu div.on { background: rgba(255,255,255,.10); }
+  .legend { margin-top: 26px; font-size: 10.5px; color: rgba(255,255,255,.5); display: flex; gap: 18px; flex-wrap: wrap; }
+  .legend span { display: inline-flex; gap: 6px; align-items: center; }
+</style>
+</head>
+<body>
+<div class="cols">
+
+  <!-- TODAY -->
+  <div class="col">
+    <h2>Today</h2>
+    <p class="note">Every row looks the same, so nothing tells you which chats still need you.</p>
+    <div class="pop">
+      <div class="hdr">Recent chats</div>
+      <div class="row"><div class="txt"><div class="t">Stream Deck test: reply with just t…</div><div class="s">3 minutes ago</div></div></div>
+      <div class="row"><div class="txt"><div class="t">the cxtasks app has become far too…</div><div class="s">9 minutes ago</div></div></div>
+      <div class="row"><div class="txt"><div class="t">i want to explore this. spawn a her…</div><div class="s">11 minutes ago</div></div></div>
+      <div class="row"><div class="txt"><div class="t">spawn a herdr session that creates…</div><div class="s">5 hours ago</div></div></div>
+      <div class="row"><div class="txt"><div class="t">Why does this keep popping up?</div><div class="s">5 hours ago</div></div></div>
+      <div class="row"><div class="txt"><div class="t">like we did with pocketbuddy, set u…</div><div class="s">5 hours ago</div></div></div>
+      <div class="row"><div class="txt"><div class="t">what dimesions are a passport photo…</div><div class="s">6 hours ago</div></div></div>
+    </div>
+  </div>
+
+  <!-- A: DOTS -->
+  <div class="col">
+    <h2>A · Dot + state word</h2>
+    <p class="note">Herdr's states. The dot is on the left and the state is written next to the time, so color is never the only signal. Idle rows dim slightly.</p>
+    <div class="pop">
+      <div class="hdr">Recent chats</div>
+      <div class="row"><span class="dot work"></span><div class="txt"><div class="t">Stream Deck test: reply with just t…</div><div class="s"><b class="work">working</b> · 3 minutes ago</div></div></div>
+      <div class="row hover"><span class="dot red"></span><div class="txt"><div class="t">the cxtasks app has become far too…</div><div class="s"><b class="red">needs you</b> · 9 minutes ago</div></div></div>
+      <div class="row"><span class="dot blue"></span><div class="txt"><div class="t">i want to explore this. spawn a her…</div><div class="s"><b class="blue">unread</b> · 11 minutes ago</div></div></div>
+      <div class="row"><span class="dot ring"></span><div class="txt"><div class="t">spawn a herdr session that creates…</div><div class="s"><b class="blue">still on me</b> · 5 hours ago</div></div></div>
+      <div class="row idle"><span class="dot none"></span><div class="txt"><div class="t">Why does this keep popping up?</div><div class="s">5 hours ago</div></div></div>
+      <div class="row idle"><span class="dot none"></span><div class="txt"><div class="t">like we did with pocketbuddy, set u…</div><div class="s">5 hours ago</div></div></div>
+      <div class="row idle"><span class="dot none"></span><div class="txt"><div class="t">what dimesions are a passport photo…</div><div class="s">6 hours ago</div></div></div>
+    </div>
+  </div>
+
+  <!-- B: GROUPED -->
+  <div class="col">
+    <h2>B · Grouped by state</h2>
+    <p class="note">The same dots, but chats that need you rise to the top. The order follows the state, not the time.</p>
+    <div class="pop">
+      <div class="hdr">Recent chats</div>
+      <div class="group">NEEDS YOU</div>
+      <div class="row"><span class="dot red"></span><div class="txt"><div class="t">the cxtasks app has become far too…</div><div class="s">9 minutes ago</div></div></div>
+      <div class="row"><span class="dot blue"></span><div class="txt"><div class="t">i want to explore this. spawn a her…</div><div class="s">unread · 11 minutes ago</div></div></div>
+      <div class="row"><span class="dot ring"></span><div class="txt"><div class="t">spawn a herdr session that creates…</div><div class="s">still on me · 5 hours ago</div></div></div>
+      <div class="group">WORKING</div>
+      <div class="row"><span class="dot work"></span><div class="txt"><div class="t">Stream Deck test: reply with just t…</div><div class="s">3 minutes ago</div></div></div>
+      <div class="group">DONE</div>
+      <div class="row idle"><span class="dot none"></span><div class="txt"><div class="t">Why does this keep popping up?</div><div class="s">5 hours ago</div></div></div>
+      <div class="row idle"><span class="dot none"></span><div class="txt"><div class="t">like we did with pocketbuddy, set u…</div><div class="s">5 hours ago</div></div></div>
+    </div>
+  </div>
+
+  <!-- MANUAL FLAG -->
+  <div class="col">
+    <h2>Step 4 · Manual flag</h2>
+    <p class="note">The one state detection can't see: you've read it but still need to act. Right-click a row to set it.</p>
+    <div class="pop">
+      <div class="hdr">Recent chats</div>
+      <div class="row idle"><span class="dot none"></span><div class="txt"><div class="t">Why does this keep popping up?</div><div class="s">5 hours ago</div></div></div>
+      <div class="row hover"><span class="dot none"></span><div class="txt"><div class="t">like we did with pocketbuddy, set u…</div><div class="s">5 hours ago</div></div></div>
+      <div class="menu"><div class="on">Still on me</div><div>Rename…</div></div>
+      <div class="row idle"><span class="dot none"></span><div class="txt"><div class="t">what dimesions are a passport photo…</div><div class="s">6 hours ago</div></div></div>
+    </div>
+  </div>
+</div>
+
+<div class="legend">
+  <span><i class="dot red" style="display:inline-block"></i> needs you: a review, approval or context choice (Herdr "blocked")</span>
+  <span><i class="dot blue" style="display:inline-block"></i> answered, unread (Herdr "done")</span>
+  <span><i class="dot ring" style="display:inline-block"></i> read, still on me (manual)</span>
+  <span><i class="dot work" style="display:inline-block"></i> working</span>
+  <span>no dot: seen, idle</span>
+</div>
+</body>
+</html>
