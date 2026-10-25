@@ -429,6 +429,11 @@ struct PopupView: View {
                                     model.recordOutcome(message: message.id, card: card.id, finding: finding.id, outcome: outcome)
                                 }
                             }
+                            if !user, message.complete, let blocked = message.blocked, !blocked.isEmpty {
+                                BlockedActionsCard(actions: blocked, disabled: model.busy || model.delegation != nil || model.herdrProposal != nil) {
+                                    model.approveBlocked(message.id)
+                                }.padding(.trailing, 28)
+                            }
                             if !message.complete && (!message.text.isEmpty || !steps.isEmpty) && !model.busy {
                                 Text(message.text.isEmpty ? "Stopped" : "Stopped · partial response").font(appFont(size: 10)).foregroundStyle(muted)
                             }
@@ -1475,5 +1480,36 @@ private struct MenuRow: View {
         }
         .buttonStyle(.plain).disabled(!enabled)
         .onHover { hovered = $0 }
+    }
+}
+
+/// What a reply's permission check refused, verbatim, and the one click that approves it.
+struct BlockedActionsCard: View {
+    let actions: [String]
+    let disabled: Bool
+    let approve: () -> Void
+
+    var body: some View {
+        let one = actions.count == 1
+        VStack(alignment: .leading, spacing: 10) {
+            Label(one ? "Claude’s permission check blocked this" : "Claude’s permission check blocked these",
+                  systemImage: "hand.raised").font(appFont(size: 13, weight: .semibold))
+            ForEach(Array(actions.prefix(4).enumerated()), id: \.offset) { _, action in
+                Text(action).font(appFont(size: 11, design: .monospaced)).foregroundStyle(.white.opacity(0.8))
+                    .lineLimit(6).truncationMode(.tail).textSelection(.enabled)
+                    .padding(8).frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color.black.opacity(0.25), in: RoundedRectangle(cornerRadius: 8))
+            }
+            if actions.count > 4 { Text("and \(actions.count - 4) more").font(appFont(size: 11)).foregroundStyle(muted) }
+            HStack {
+                Text("Approving sends a message naming \(one ? "it" : "them"), and Claude runs \(one ? "it" : "them") again.")
+                    .font(appFont(size: 11)).foregroundStyle(muted)
+                Spacer()
+                Button("Approve & retry", action: approve).disabled(disabled)
+            }.controlSize(.small)
+        }.padding(14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 12))
+            .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Color.white.opacity(0.12)))
     }
 }

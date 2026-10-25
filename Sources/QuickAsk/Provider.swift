@@ -94,6 +94,9 @@ struct ChatMessage: Identifiable, Codable, Equatable {
     var tools: [String]? = nil
     /// The work behind the reply, drawn as a log above it. Optional so older saved chats load.
     var activity: [ActivityStep]? = nil
+    /// Actions Claude's permission check refused in this reply. A `--print` session has no one to
+    /// ask, so the refusal is final there; the reply offers to approve them and run them again.
+    var blocked: [String]? = nil
 
     init(role: String, text: String, provider: Provider? = nil, complete: Bool = true, images: [ImageAttachment] = []) {
         id = UUID(); self.role = role; self.text = text
@@ -396,6 +399,8 @@ enum ProviderEvent {
     case tool(String)
     /// A step of the work log, its whole current state: add it, or replace the row with its id.
     case activity(ActivityStep)
+    /// Actions the permission check refused, as the user would approve them (a Bash command verbatim).
+    case blocked([String])
     case failure(String)
 }
 
@@ -432,6 +437,19 @@ final class EventDecoder {
     /// "zen-ext · open_url" for `mcp__zen-ext__open_url`; built-in tools keep their names.
     static func toolName(_ raw: String) -> String {
         (raw.hasPrefix("mcp__") ? String(raw.dropFirst(5)) : raw).replacingOccurrences(of: "__", with: " · ")
+    }
+
+    /// A result's `permission_denials`, each as the user would approve it: a Bash command verbatim,
+    /// a file tool with its path, any other tool by name. Repeats of one action count once.
+    static func blockedActions(_ denials: Any?) -> [String] {
+        var seen = Set<String>()
+        return (denials as? [[String: Any]] ?? []).compactMap { denial -> String? in
+            guard let name = denial["tool_name"] as? String else { return nil }
+            let input = denial["tool_input"] as? [String: Any] ?? [:]
+            if name == "Bash", let command = (input["command"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !command.isEmpty { return command }
+            if let path = (input["file_path"] ?? input["path"]) as? String { return "\(toolName(name)) \(path)" }
+            return toolName(name)
+        }.filter { seen.insert($0).inserted }
     }
 
     /// The Markdown for a show-your-work call: the picture or video itself, which the reply plays in place.
@@ -517,6 +535,8 @@ final class EventDecoder {
                 return text.isEmpty ? [] : [.text(text)]
             }
             if type == "result" {
+                let blocked = Self.blockedActions(event["permission_denials"])
+                if !blocked.isEmpty { return [.blocked(blocked)] + content(event.filter { $0.key != "permission_denials" }, type: type) }
                 if event["is_error"] as? Bool == true {
                     let errors = event["errors"] as? [String]
                     failure = event["result"] as? String ?? errors?.joined(separator: "\n") ?? "Claude could not complete this request."

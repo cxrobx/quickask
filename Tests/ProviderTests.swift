@@ -122,6 +122,18 @@ struct ProviderTests {
               && resumed.contains { if case .activity(let s) = $0 { return s.id == "retry" && s.state == .done }; return false },
               "An API retry shows until the next message starts")
 
+        // A permission check's refusals reach the reply, verbatim and once each, with the answer intact.
+        let denied = EventDecoder(provider: .claude)
+        let refused = denied.decode(Data(#"{"type":"result","subtype":"success","is_error":false,"result":"Blocked.","permission_denials":[{"tool_name":"Bash","tool_input":{"command":"ssh prod-x 'psql' <<'SQL'\nSELECT count(*);\nSQL\n"}},{"tool_name":"Bash","tool_input":{"command":"ssh prod-x 'psql' <<'SQL'\nSELECT count(*);\nSQL"}},{"tool_name":"Write","tool_input":{"file_path":"/etc/hosts"}},{"tool_name":"mcp__zen-ext__click","tool_input":{}}]}"#.utf8))
+        check(refused.contains { if case .blocked(let a) = $0 { return a == ["ssh prod-x 'psql' <<'SQL'\nSELECT count(*);\nSQL", "Write /etc/hosts", "zen-ext · click"] }; return false }
+              && refused.contains { if case .text("Blocked.") = $0 { return true }; return false },
+              "Permission denials become one approvable action each, beside the answer")
+        check(EventDecoder(provider: .claude).decode(Data(#"{"type":"result","is_error":false,"result":"ok","permission_denials":[]}"#.utf8))
+              .allSatisfy { if case .blocked = $0 { return false }; return true }, "No denials, no approval card")
+        let approval = AppModel.approvalText(["echo ```hi```"])
+        check(approval.hasPrefix("I approve this action") && approval.contains("````\necho ```hi```\n````"),
+              "The approval names the command inside a fence its backticks can't close")
+
         // Masking: details are shown and saved, so credentials never are.
         let masked = [ActivityStep.clean("curl -H 'Authorization: Bearer abcdef0123456789xyz' https://api.example.com")!,
                       ActivityStep.clean("CF_API_KEY=abc123def456 wrangler deploy")!,

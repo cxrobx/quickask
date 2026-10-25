@@ -718,6 +718,35 @@ final class AppModel: ObservableObject {
         status = "Screen context changed. Send a fresh request before another action."
     }
 
+    /// The user approved the actions a reply's permission check refused: My setup runs again with a
+    /// message that names each one. Claude's auto mode clears an action the user named themselves
+    /// (an allow rule can't: it drops broad `ssh` rules, and an exact one misses a regenerated command).
+    func approveBlocked(_ id: UUID) {
+        guard !busy, delegation == nil, herdrProposal == nil,
+              let actions = messages.first(where: { $0.id == id })?.blocked, !actions.isEmpty else { return }
+        guard draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, attachments.isEmpty else {
+            status = "Send or clear your draft first, then approve."; return
+        }
+        guard path(for: .claude) != nil else { status = "Claude Code wasn’t found. Set its path in Settings."; return }
+        let text = Self.approvalText(actions)
+        withMessages(of: activeSessionID) { messages in
+            if let index = messages.firstIndex(where: { $0.id == id }) { messages[index].blocked = nil }
+        }
+        draft = text
+        let turn = Turn(sessionID: activeSessionID, text: text, attachments: [], provider: .claude, control: false,
+                        target: nil, history: messages, previousScope: lastRouteScope, directory: directory)
+        setRoute(of: activeSessionID, scope: .personal)
+        startAnswer(turn, context: nil, personal: true)
+    }
+
+    nonisolated static func approvalText(_ actions: [String]) -> String {
+        // A fence longer than any backtick run inside the commands, so none can close it early.
+        let longest = actions.flatMap { $0.split(whereSeparator: { $0 != "`" }).map(\.count) }.max() ?? 0
+        let fence = String(repeating: "`", count: max(3, longest + 1))
+        let list = actions.map { "\(fence)\n\($0)\n\(fence)" }.joined(separator: "\n\n")
+        return "I approve \(actions.count == 1 ? "this action" : "these actions") your permission check blocked. Run \(actions.count == 1 ? "it" : "them") again and carry on:\n\n\(list)"
+    }
+
     private func startAnswer(_ turn: Turn, context: GatewayConfiguration?, screen: ScreenPayload? = nil, screenshot: ImageAttachment? = nil, personal: Bool = false) {
         let tab = turn.sessionID, provider = turn.provider, controlEnabled = turn.control, targetApp = turn.target
         func fail(_ message: String) { report(message, in: tab) }
@@ -794,6 +823,10 @@ final class AppModel: ObservableObject {
                     }
                 case .card(let card):
                     self.withMessages(of: run.sessionID) { messages in if let index = messages.firstIndex(where: { $0.id == reply.id }) { messages[index].cards.append(card) } }
+                case .blocked(let actions):
+                    self.withMessages(of: run.sessionID) { messages in
+                        if let index = messages.firstIndex(where: { $0.id == reply.id }) { messages[index].blocked = actions }
+                    }
                 case .failure(let message): if showing { self.error = message }
                 }
             }
