@@ -7,6 +7,9 @@ Native macOS popup assistant, macOS 14+. Compile with macOS 26 SDK or later for 
 - `bash scripts/build.sh`: builds the Swift app and ad-hoc signs it.
 - `bash scripts/test.sh`: Swift provider/transport and scoped desktop bridge tests.
 - `node Tests/MCPProtocolTests.cjs dist/QuickAsk.app`: desktop MCP protocol test without controlling an app.
+- `bash scripts/eval-replies.sh`: live reply eval (Claude CLI login, the app's model; `REPLY_EVAL_MODEL=haiku` for a cheap run): whether routes without hands pass requests to My setup, and leave the rest alone.
+
+Routing and route prompts are the harness. A request that lands on a route that can't do it, a reply that says "I can't … from here", a Herdr or task request missed or misfired: each one becomes a `Tests/HarnessEval.swift` case first, paraphrased with no personal data, with a `gap` note while it fails. The fix then removes the note. `scripts/test.sh` fails if a case outside a gap regresses, or if a gap passes and still carries its note, so the score only goes up. Prefer a fix that generalises (RouteDecision, `Escalation`) over another phrase regex; if a regex it must be, add paraphrases and a negative alongside the incident's own words. The route decision lives in `RouteDecision` (RoutingSignals.swift), pure: keep side effects in `AppModel.send`.
 
 Never log tokens, authorization codes, clipboard contents, screenshots, or raw server errors. Keep credentials, caches, node_modules, build output, and dist out of Git.
 

@@ -1315,6 +1315,32 @@ struct ProviderTests {
               "A retry opens Herdr only right after a Herdr request, and never negated or as a longer new question")
         let noToolsPrompt = try PromptBuilder.make(messages: [.init(role: "user", text: "spawn a herdr session")])
         check(noToolsPrompt.contains("[[herdr:") && noToolsPrompt.contains("never say you can't"), "Every route knows Quick Ask opens Herdr and how to offer it")
+        // 2026-10-26: a route without hands passes the request to My setup instead of refusing it.
+        check(Escalation.requested("[[my-setup]]") && Escalation.requested("This needs your files.\n[[my-setup]]\n") && !Escalation.requested("Use the [[my-setup]] line, as here.")
+              && !Escalation.requested("Rain on tin roofs."), "Only the marker on a line of its own passes the request on")
+        check(Escalation.pending("[[my") && Escalation.pending("[[my-setup]]") && !Escalation.pending("") && !Escalation.pending("Sure, here's"), "Streaming text that is only the marker so far stays hidden")
+        for refusal in ["I can't spawn a Herdr session from here because this reply can't run commands or act in apps.",
+                        "**Probably yes, but I haven't checked either one directly.** I can't run commands in this reply, so here's what the earlier checks show.",
+                        "I can't control your browser, but I can run more searches.", "I can't open links.",
+                        "I can't see your saved phone buying decision. It isn't on screen or in this chat.", "I can't edit QuickAsk's code from here.",
+                        "That makes sense as a feature. I can't change Quick Ask or file the request from here, but this is what it would take.",
+                        "I can't open or read the Docusign page.", "I can't do that from here. This window only gives me a view of your screen.",
+                        "I still can't click for you.", "I couldn't do any web research. This request only gives me the app-control tools, and I have no browser or search."] {
+            check(Escalation.disowns(refusal), "A real refusal offers My setup: \(refusal.prefix(50))")
+        }
+        for answer in ["I can't fully confirm it, but the claim is partly right.", "I can't recommend that brand; reviews are mixed.",
+                       "You can't open devtools from the menu bar; press Option-Command-I.", "I can't tell from the screenshot whether the cable is in.",
+                       "Here's a bash script you can run to rename the files.", "I can't see the bottom of the page in what's shown."] {
+            check(!Escalation.disowns(answer), "An honest limit isn't a refusal of hands: \(answer.prefix(50))")
+        }
+        let passing = try PromptBuilder.make(messages: [.init(role: "user", text: "restart the container")], web: true, escalate: true)
+        let screenPassing = try PromptBuilder.make(messages: [.init(role: "user", text: "check it")], screen: ScreenPayload(snapshot: snapshot, plan: .general("x"), windows: [], screenshotAttached: false), escalate: true)
+        let codexReply = try PromptBuilder.make(messages: [.init(role: "user", text: "restart the container")])
+        let setupReply = try PromptBuilder.make(messages: [.init(role: "user", text: "restart the container")], personal: true)
+        check(passing.contains("[[my-setup]]") && screenPassing.contains("[[my-setup]]") && !passing.contains("say Quick Ask opens links"),
+              "A route without hands is told to pass the request on, not to explain how to ask")
+        check(!codexReply.contains("[[my-setup]]") && codexReply.contains("say Quick Ask opens links") && !setupReply.contains("[[my-setup]]"),
+              "With no My setup to pass to (Codex), and on My setup itself, there's no marker")
         // 2026-10-24: asking for Herdr opens it; only My setup's own offer for a bigger build shows the review card.
         let offered = HerdrHandoff.suggestion(in: "That touches the router, the card and the tests.\n\n[[herdr: Add a Herdr suggestion card to Quick Ask]]\n")
         check(offered?.instruction == "Add a Herdr suggestion card to Quick Ask" && offered?.text == "That touches the router, the card and the tests.", "A reply's Herdr offer line becomes the card's instruction and leaves the reply")

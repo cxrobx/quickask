@@ -149,6 +149,11 @@ enum HarnessEval {
         .init(id: "neg: make this chart bigger", text: "make this chart bigger", front: .browser, hands: false, want: [.screen, .general]),
         .init(id: "neg: task in another app", text: "How do I create a task in Linear?", hands: false, want: [.general, .screen]),
         .init(id: "neg: summarize this page", text: "Summarize this page", front: .browser, hands: false, want: [.screen]),
+        // Over-escalation probes: about machines and commands, but answered from knowledge or as code to run yourself.
+        .init(id: "neg: write a script", text: "write a bash script that renames every .jpeg in a folder to .jpg", hands: false, want: [.general, .screen]),
+        .init(id: "neg: backup advice", text: "what's a good backup strategy for a home NAS?", hands: false, want: [.general, .screen]),
+        .init(id: "neg: explain this error", text: "what does this error mean?", hands: false, want: [.screen, .general]),
+        .init(id: "neg: docker health how-to", text: "how do I check if a docker container is healthy?", hands: false, want: [.general, .screen]),
         .init(id: "neg: topic switch in a My setup chat", text: "What's the capital of France?",
               history: mySetup("check the nas", "All healthy."), previous: .personal, hands: false, want: [.general, .personal]),
     ]

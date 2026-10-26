@@ -434,6 +434,13 @@ struct PopupView: View {
                                     model.approveBlocked(message.id)
                                 }.padding(.trailing, 28)
                             }
+                            if !user, message.complete, message.offersSetup == true, message.id == model.messages.last?.id {
+                                HStack {
+                                    Text("This reply had no tools.").font(appFont(size: 11)).foregroundStyle(muted)
+                                    Button("Run with My setup") { model.runWithSetup(message.id) }
+                                        .disabled(model.busy || model.delegation != nil || model.herdrProposal != nil)
+                                }.controlSize(.small).padding(.trailing, 28)
+                            }
                             if !message.complete && (!message.text.isEmpty || !steps.isEmpty) && !model.busy {
                                 Text(message.text.isEmpty ? "Stopped" : "Stopped · partial response").font(appFont(size: 10)).foregroundStyle(muted)
                             }

@@ -213,7 +213,7 @@ final class AppModel: ObservableObject {
         let message = RouteDecision.Message(text: text, history: messages, provider: provider, choice: contextChoice, control: controlEnabled,
                                             taskReview: taskReview, herdrReview: herdrReview, front: candidateWindow, shownPage: shownPage != nil)
         let gates = RouteDecision.gates(message)
-        let truth = gates.truth, retried = gates.retried, transfer = gates.transfer, link = gates.link, browse = gates.browse
+        let truth = gates.truth, retried = gates.retried, link = gates.link
         if truth && Self.truthTarget(in: draft)!.isEmpty && attachments.isEmpty && !messages.contains(where: { $0.role == "assistant" && $0.complete && !$0.text.isEmpty }) {
             status = "Nothing to check yet. Put a claim, link or image after /truthcheck."; focusToken += 1; return
         }
@@ -707,6 +707,20 @@ final class AppModel: ObservableObject {
         startAnswer(turn, context: nil, personal: true)
     }
 
+    /// A reply on a route without hands said it couldn't: its question runs again on My setup, in its place.
+    func runWithSetup(_ id: UUID) {
+        guard !busy, delegation == nil, herdrProposal == nil, messages.last?.id == id,
+              let index = messages.firstIndex(where: { $0.id == id }), index > 0, messages[index - 1].role == "user" else { return }
+        guard path(for: .claude) != nil else { status = "Claude Code wasn’t found. Set its path in Settings."; return }
+        let question = messages[index - 1]
+        withMessages(of: activeSessionID) { $0.removeAll { $0.id == id || $0.id == question.id } }
+        let turn = Turn(sessionID: activeSessionID, text: question.text, attachments: question.images, provider: .claude, control: false,
+                        target: nil, history: messages, previousScope: lastRouteScope, directory: directory)
+        setRoute(of: activeSessionID, scope: .personal)
+        contextLabel = "My setup"
+        startAnswer(turn, context: nil, personal: true, rerun: true)
+    }
+
     nonisolated static func approvalText(_ actions: [String]) -> String {
         // A fence longer than any backtick run inside the commands, so none can close it early.
         let longest = actions.flatMap { $0.split(whereSeparator: { $0 != "`" }).map(\.count) }.max() ?? 0
@@ -715,7 +729,9 @@ final class AppModel: ObservableObject {
         return "I approve \(actions.count == 1 ? "this action" : "these actions") your permission check blocked. Run \(actions.count == 1 ? "it" : "them") again and carry on:\n\n\(list)"
     }
 
-    private func startAnswer(_ turn: Turn, context: GatewayConfiguration?, screen: ScreenPayload? = nil, screenshot: ImageAttachment? = nil, personal: Bool = false) {
+    /// `rerun`: the message was already sent and is running again elsewhere (Escalation), so the draft,
+    /// which may hold your next message by now, is left alone.
+    private func startAnswer(_ turn: Turn, context: GatewayConfiguration?, screen: ScreenPayload? = nil, screenshot: ImageAttachment? = nil, personal: Bool = false, rerun: Bool = false) {
         let tab = turn.sessionID, provider = turn.provider, controlEnabled = turn.control, targetApp = turn.target
         func fail(_ message: String) { report(message, in: tab) }
         if let context {
@@ -734,7 +750,7 @@ final class AppModel: ObservableObject {
             fail("\(provider.detail) wasn’t found. Install and sign in to the CLI, or set its absolute path in Settings.")
             return
         }
-        guard draftUnchanged(turn) else { status = "Your question changed. Send it again to check its context."; return }
+        guard rerun || draftUnchanged(turn) else { status = "Your question changed. Send it again to check its context."; return }
         let text = turn.text
         var messages: [ChatMessage] = []
         withMessages(of: tab) { messages = $0 }
@@ -743,17 +759,19 @@ final class AppModel: ObservableObject {
         let images = ImageAttachment.recent(in: messages + [pending])
         // A chat answer without tools, app control or My setup may search the web, screen or not; Claude only.
         let web = provider == .claude && context == nil && !controlEnabled && !personal
+        // A route without hands hands the request to My setup rather than refusing it; Claude only, since My setup is Claude.
+        let escalate = provider == .claude && !personal && !controlEnabled
         // My setup can hand an image on only as a file; the answer still sees it without one.
         let imageFiles = personal && !images.isEmpty ? ImageAttachment.standardStore.flatMap { try? ImageAttachment.store(images, in: $0) } ?? [] : []
         let prompt: String
         let directory = personal ? turn.directory : nil
-        do { prompt = try PromptBuilder.make(messages: messages + [pending], target: controlEnabled ? targetApp : nil, context: context, screen: screen, personal: personal, web: web, imageFiles: imageFiles, directory: directory) + (voiceActive ? PromptBuilder.voiceNote : "") }
+        do { prompt = try PromptBuilder.make(messages: messages + [pending], target: controlEnabled ? targetApp : nil, context: context, screen: screen, personal: personal, web: web, imageFiles: imageFiles, directory: directory, escalate: escalate) + (voiceActive ? PromptBuilder.voiceNote : "") }
         catch { fail(error.localizedDescription); return }
         guard prompt.utf8.count < 200_000 else {
             fail("This chat is too long to send. Copy what you need and start a new chat.")
             return
         }
-        setDraft(of: tab, "", [])
+        if !rerun { setDraft(of: tab, "", []) }
         if tab == activeSessionID { error = nil; status = "Connecting to \(provider.title)…" }
         let run = begin(in: tab, control: controlEnabled)
         run.screen = controlEnabled || context.map { !$0.screenless } == true
@@ -765,6 +783,8 @@ final class AppModel: ObservableObject {
                 let showing = self.activeSessionID == run.sessionID
                 switch event {
                 case .text(let content):
+                    // A reply passing the request to My setup is only its marker: nothing to show or say.
+                    if escalate && Escalation.pending(content) { break }
                     if self.voiceActive { self.voice.received(content, for: reply.id) }
                     self.revealText(content, into: reply.id, run: run)
                     if showing { self.status = self.activity(of: reply.id, in: run.sessionID).current?.summary ?? "\(provider.title) is answering…" }
@@ -806,6 +826,16 @@ final class AppModel: ObservableObject {
                 run.handle = nil
                 switch result {
                 case .success(let answer):
+                    if escalate && Escalation.requested(answer) {
+                        // This route has no hands for the request: the same message runs on My setup instead.
+                        run.cancelReveal()
+                        self.runs[run.sessionID] = nil
+                        self.withMessages(of: run.sessionID) { $0.removeAll { $0.id == reply.id || $0.id == pending.id } }
+                        self.setRoute(of: tab, scope: .personal)
+                        if tab == self.activeSessionID { self.contextLabel = "My setup" }
+                        self.startAnswer(turn, context: nil, personal: true, rerun: true)
+                        return
+                    }
                     let suggestion = HerdrHandoff.suggestion(in: answer)
                     let content = suggestion?.text ?? answer
                     // The last words finish revealing (a fraction of a second) before the
@@ -816,6 +846,8 @@ final class AppModel: ObservableObject {
                             if let index = messages.firstIndex(where: { $0.id == reply.id }) {
                                 messages[index].text = content; messages[index].complete = true
                                 messages[index].activity?.settle(.done)
+                                // It refused anyway: offer the route that can do it.
+                                if escalate && Escalation.disowns(content) { messages[index].offersSetup = true }
                             }
                         }
                         let elsewhere = self.activeSessionID != run.sessionID
