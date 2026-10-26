@@ -172,6 +172,18 @@ enum PromptBuilder {
         """ : "")
     }
 
+    /// Every route: Quick Ask itself opens Herdr sessions, so no reply says it can't.
+    /// 2026-10-26: asked to "spwn a herdr session", the no-tools route said it couldn't run commands, and My setup tried
+    /// the herdr CLI, which refuses outside a Herdr pane. The `[[herdr:]]` line is the one route that works from a reply.
+    static let herdrNote = """
+
+
+    Quick Ask opens Herdr sessions itself; you don't, and neither does the herdr CLI from here. When the user asks \
+    for a Herdr session (spawn, open, start, continue in one), never say you can't: answer in a line, then end the \
+    reply with one last line `[[herdr: <the instruction for the session, one sentence>]]`, which Quick Ask turns into \
+    a one-click offer.
+    """
+
     /// Where My setup writes the pages it shows.
     static var pagesFolder: String {
         FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/QuickAsk/Pages").path
@@ -309,7 +321,7 @@ enum PromptBuilder {
             """
         }
         return """
-        \(instructions)\(imageNote(personal: personal))\(earlierRepliesNote)\(truthNote(messages, searches: personal || web))
+        \(instructions)\(imageNote(personal: personal))\(herdrNote)\(earlierRepliesNote)\(truthNote(messages, searches: personal || web))
 
         Conversation JSON:
         \(String(decoding: data, as: UTF8.self))

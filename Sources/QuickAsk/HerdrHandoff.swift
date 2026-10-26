@@ -259,6 +259,21 @@ enum HerdrHandoff {
         return value.range(of: "(?i)\\b(?:in|into|to|over to|via|through)\\s+(?:(?:a|an|the|new|another|fresh|separate)\\s+)*herdr\\b", options: .regularExpression) != nil
             || value.range(of: "(?i)\\bherdr\\b", options: .regularExpression) != nil
             && value.range(of: "(?i)\\b(?:spawn|start|open|launch|spin up|fire up|kick off|begin|create|continue|move|send|transfer|hand off|handoff|take|run|new)\\b", options: .regularExpression) != nil
+            // 2026-10-26: "can you spwn a herdr session to handle this" missed every verb above and went to a reply that said it
+            // couldn't. Asking for "a herdr session" politely is the request, whatever the verb or its spelling.
+            || value.range(of: "(?i)^(?:can|could|would|will|pls|please|plz|ok|okay|yes|yeah|go ahead|let'?s|lets)\\b", options: .regularExpression) != nil
+            && value.range(of: "(?i)\\b(?:a|an|another|new|fresh|separate)\\s+herdr\\s+(?:session|tab|agent|pane|terminal|instance)\\b", options: .regularExpression) != nil
+    }
+    /// "try again", "do it", "go ahead" right after a Herdr request that didn't open: the earlier request, to send instead.
+    /// 2026-10-26: "try again to spawn it" names no Herdr, so it went to a reply that explained why it couldn't, a second time.
+    static func retriedRequest(_ text: String, history: [ChatMessage]) -> String? {
+        let value = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard value.split(whereSeparator: \.isWhitespace).count <= 10,
+              value.range(of: "(?i)^(?:(?:please|pls|plz|ok|okay|yes|yeah|just|now)\\s+)*(?:try(?:\\s+(?:it|that))?\\s+again|retry|again|do it|do that|go ahead|(?:spawn|open|launch|start|spin up)\\s+(?:it|one|that))\\b", options: .regularExpression) != nil,
+              value.range(of: "(?i)\\b(?:don'?t|dont|never|not)\\b", options: .regularExpression) == nil,
+              let previous = history.last(where: { $0.role == "user" && $0.complete }),
+              history.last?.role == "assistant", requestsTransfer(previous.text) else { return nil }
+        return previous.text
     }
     static func referencesScreen(_ text: String) -> Bool {
         text.range(of: "(?i)\\b(?:this|current|selected|visible)\\s+(?:document|file|email|task|page|window|screen)\\b", options: .regularExpression) != nil

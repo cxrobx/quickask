@@ -1294,13 +1294,27 @@ struct ProviderTests {
         for phrase in ["start a herdr session to give quickask the ability to open links in this context", "Open a new Herdr tab and keep going",
                        "continue this in a new herdr tab", "spin up a Herdr session for this",
                        "spawn a herdr session fixing quickask, it should have auto went to \"my setup\" to search for telly", "fire up a new herdr agent for this",
-                       "yes lets do that in  a herdr session", "ok do it in herdr", "let's fix this in a new Herdr tab"] {
+                       "yes lets do that in  a herdr session", "ok do it in herdr", "let's fix this in a new Herdr tab",
+                       "can you spwn a herdr session to handle this", "could you get another herdr session on this"] {
             check(HerdrHandoff.requestsTransfer(phrase), "Starting a Herdr session is a transfer request: \(phrase)")
         }
         for phrase in ["What is a herdr session?", "Explain how to start a herdr session", "Don't start a herdr session", "Don't spawn a herdr session", "Herdr sessions are great",
-                       "Is this possible in herdr?", "Don't do that in a herdr session"] {
+                       "Is this possible in herdr?", "Don't do that in a herdr session", "I had a herdr session crash yesterday", "can you explain a herdr session?"] {
             check(!HerdrHandoff.requestsTransfer(phrase), "Asking about or declining Herdr is not a transfer: \(phrase)")
         }
+        // 2026-10-26: "try again to spawn it" after a Herdr request that didn't open re-sends that request.
+        let asked: [ChatMessage] = [.init(role: "user", text: "can you spwn a herdr session to handle this", complete: true),
+                                    .init(role: "assistant", text: "I can't spawn a Herdr session from here.", complete: true)]
+        check(HerdrHandoff.retriedRequest("try again to spawn it", history: asked) == "can you spwn a herdr session to handle this"
+              && HerdrHandoff.retriedRequest("ok do it", history: asked) != nil && HerdrHandoff.retriedRequest("go ahead", history: asked) != nil,
+              "A retry right after a Herdr request sends that request again")
+        let unrelated: [ChatMessage] = [.init(role: "user", text: "what's the weather", complete: true), .init(role: "assistant", text: "Sunny.", complete: true)]
+        check(HerdrHandoff.retriedRequest("try again", history: unrelated) == nil && HerdrHandoff.retriedRequest("don't try again", history: asked) == nil
+              && HerdrHandoff.retriedRequest("try again but explain why the tunnel fails and what the logs say about it", history: asked) == nil
+              && HerdrHandoff.retriedRequest("try again", history: []) == nil,
+              "A retry opens Herdr only right after a Herdr request, and never negated or as a longer new question")
+        let noToolsPrompt = try PromptBuilder.make(messages: [.init(role: "user", text: "spawn a herdr session")])
+        check(noToolsPrompt.contains("[[herdr:") && noToolsPrompt.contains("never say you can't"), "Every route knows Quick Ask opens Herdr and how to offer it")
         // 2026-10-24: asking for Herdr opens it; only My setup's own offer for a bigger build shows the review card.
         let offered = HerdrHandoff.suggestion(in: "That touches the router, the card and the tests.\n\n[[herdr: Add a Herdr suggestion card to Quick Ask]]\n")
         check(offered?.instruction == "Add a Herdr suggestion card to Quick Ask" && offered?.text == "That touches the router, the card and the tests.", "A reply's Herdr offer line becomes the card's instruction and leaves the reply")
@@ -1308,7 +1322,7 @@ struct ProviderTests {
               "Only a non-empty offer on the reply's last line counts")
         let mySetup = try PromptBuilder.make(messages: [.init(role: "user", text: "build a sync engine")], personal: true)
         let unscopedPrompt = try PromptBuilder.make(messages: [.init(role: "user", text: "build a sync engine")])
-        check(mySetup.contains("[[herdr:") && !unscopedPrompt.contains("[[herdr:"), "Only My setup, which could start the build, is told to offer Herdr")
+        check(mySetup.contains("larger build") && !unscopedPrompt.contains("larger build"), "Only My setup, which could start the build, is told to offer Herdr for one unasked")
         check(!HerdrProposal.make(question: "spawn a herdr session", history: [], attachments: [], snapshot: nil, provider: .claude).direct, "A proposal starts as a card; the router marks the ones you asked for direct")
         check(!HerdrHandoff.referencesScreen("transfer this session to herdr") && HerdrHandoff.referencesScreen("transfer to Herdr and edit this document"), "A generic transfer does not collect unrelated screen content")
         let conversation = (0..<12).map { ChatMessage(role: $0 % 2 == 0 ? "user" : "assistant", text: "Message \($0): keep this constraint.") }
