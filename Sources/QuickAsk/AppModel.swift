@@ -252,7 +252,8 @@ final class AppModel: ObservableObject {
             enum Next { case task, herdr, choose(String), answer(RoutePlan), meeting(String) }
             let next: Next
             let step = await RouteDecision.next(message, gates, started: started, directory: turn.directory, meeting: meeting != nil,
-                                                images: attached.count, screen: snapshot != nil, routingOff: self.routingEngine == RoutingEngine.offTag) {
+                                                images: attached.count, screen: snapshot != nil, routingOff: self.routingEngine == RoutingEngine.offTag,
+                                                previous: previous) {
                 await Task.detached { (ProjectRegistry.workspaces() + ProjectRegistry.localRepos()).map { ($0.path as NSString).lastPathComponent } }.value
             }
             switch step {

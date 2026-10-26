@@ -52,6 +52,8 @@ enum HerdrInference {
         // Remove the transport request only when a concrete next action follows it.
         // 2026-10-24: "can u spawn a herdr session to handle as many of these as possible?" went over whole, and the new
         // session read "spawn a herdr session" as its job and opened a second one. The noun after "herdr" is part of the request.
+        if let expression = try? NSRegularExpression(pattern: delegation + "(.+)$"), let match = expression.firstMatch(in: value, range: NSRange(value.startIndex..., in: value)),
+           let range = Range(match.range(at: 1), in: value) { return String(value[range]).trimmingCharacters(in: .whitespacesAndNewlines) }
         let pattern = "(?is)\\bherdr\\b(?:\\s+(?:session|tab|agent|pane|terminal|instance))?\\s*[,;:]?\\s*(?:and\\s+)?(?:have\\s+(?:it|the agent|claude|codex)\\s+|(?:then|to|and)\\s+)(.+)$"
         if let expression = try? NSRegularExpression(pattern: pattern), let match = expression.firstMatch(in: value, range: NSRange(value.startIndex..., in: value)), let range = Range(match.range(at: 1), in: value) {
             let action = String(value[range]).trimmingCharacters(in: .whitespacesAndNewlines)
@@ -60,6 +62,8 @@ enum HerdrInference {
         if HerdrHandoff.requestsTransfer(value) && value.range(of: "(?i)\\bherdr[.!?]*$", options: .regularExpression) != nil { return "Continue this conversation in Herdr." }
         return value
     }
+    /// "have herdr do X", "let a herdr agent fix it": the work goes to Herdr, and what follows is the task.
+    static let delegation = "(?i)\\b(?:have|let|get|ask)\\s+(?:a\\s+|the\\s+|another\\s+|new\\s+)*herdr(?:\\s+(?:session|tab|agent))?\\s+(?:to\\s+)?(?=(?:do|handle|fix|take|run|work|build|look|finish|clean|tackle|start|investigate|write|update|apply)\\b)"
     /// Where a folder found in text may open a session, unless it is a registered workspace: under these roots, outside any app or other package.
     /// 2026-10-24: a reply's `/Applications/Synology Drive Client.app` opened two sessions inside the bundle.
     static var workRoots = [FileManager.default.homeDirectoryForCurrentUser.resolvingSymlinksInPath().standardizedFileURL.path]
@@ -250,9 +254,13 @@ enum HerdrHandoff {
 
     /// User intent, not a model tool or a keyword in screen content.
     static func requestsTransfer(_ text: String) -> Bool {
-        let value = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let whole = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Judged on the sentence that names Herdr: "what's broken here? spawn a herdr session to fix it" asks for one.
+        let value = whole.components(separatedBy: CharacterSet(charactersIn: ".?!\n"))
+            .first { $0.range(of: "(?i)\\bherdr\\b", options: .regularExpression) != nil }?.trimmingCharacters(in: .whitespaces) ?? whole
         if value.range(of: "(?i)^(how|what|why|when|where|which|who|should|is|are|does|did|was|were)\\b", options: .regularExpression) != nil { return false }
-        if value.range(of: "(?is)\\b(?:do not|don't|dont|never|without|not)\\s+(?:\\w+\\s+){0,4}herdr\\b|\\b(?:explain|describe|show me how)\\b.*\\bherdr\\b", options: .regularExpression) != nil { return false }
+        // Explaining Herdr isn't asking for it: "start by explaining what a tab is in herdr" opened a session (eval, 2026-10-26).
+        if value.range(of: "(?is)\\b(?:do not|don't|dont|never|without|not)\\s+(?:\\w+\\s+){0,4}herdr\\b|\\b(?:explain\\w*|describ\\w*|show me how|tell me (?:about|how|what|why)|teach me)\\b.*\\bherdr\\b", options: .regularExpression) != nil { return false }
         // "Herdr" with any launch or transfer verb is the request: "spawn a herdr session", "continue in Herdr".
         // "Herdr sessions are great" names it without asking. The handoff still opens a review before anything launches.
         // Doing something "in a herdr session" is the request too, whatever the verb: "yes lets do that in a herdr session".
@@ -263,6 +271,8 @@ enum HerdrHandoff {
             // couldn't. Asking for "a herdr session" politely is the request, whatever the verb or its spelling.
             || value.range(of: "(?i)^(?:can|could|would|will|pls|please|plz|ok|okay|yes|yeah|go ahead|let'?s|lets)\\b", options: .regularExpression) != nil
             && value.range(of: "(?i)\\b(?:a|an|another|new|fresh|separate)\\s+herdr\\s+(?:session|tab|agent|pane|terminal|instance)\\b", options: .regularExpression) != nil
+            // Handing the work to Herdr by name: "have herdr do the cleanup", "let a herdr agent fix it".
+            || value.range(of: HerdrInference.delegation, options: .regularExpression) != nil
     }
     /// "try again", "do it", "go ahead" right after a Herdr request that didn't open: the earlier request, to send instead.
     /// 2026-10-26: "try again to spawn it" names no Herdr, so it went to a reply that explained why it couldn't, a second time.

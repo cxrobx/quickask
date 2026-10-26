@@ -574,8 +574,9 @@ enum RouteDecision {
 
     /// `started`: the folder a new chat about a project starts in. `directory`: the chat's own (`!cd`).
     /// `screen`: the front window was captured. `repos` is read only when the step that needs it is reached.
+    /// `previous`: the route the chat's last answer ran on.
     nonisolated static func next(_ m: Message, _ g: Gates, started: URL? = nil, directory: URL? = nil, meeting: Bool = false,
-                                 images: Int = 0, screen: Bool, routingOff: Bool = false, repos: () async -> [String]) async -> Step {
+                                 images: Int = 0, screen: Bool, routingOff: Bool = false, previous: RouteScope? = nil, repos: () async -> [String]) async -> Step {
         if g.transfer { return .herdr }
         // A truth check reads whatever it is given, so with Claude it runs where links open.
         if g.truth { return .answer(m.provider == .claude ? .personal("A truth check runs with your Claude setup, so it can read any link.")
@@ -597,6 +598,12 @@ enum RouteDecision {
             guard let window = m.front else { return .noWindow }
             return .answer(.init(scope: .screen, window: window, connector: AppConnector.matching(window.bundleID), writes: true,
                                  screenshot: false, project: nil, explanation: "Selected \(window.appName)."))
+        }
+        // A chat already on My setup stays there: its follow-ups ("just to confirm both still work, right?", "cont") need
+        // the same hands, and the router scored one that plain 0.56 on follow_up (2026-10-25). During a live meeting the
+        // router still decides, so a question about the meeting reaches the copilot.
+        if previous == .personal && m.provider == .claude && !meeting {
+            return .answer(.personal("This chat runs with your Claude setup, so it stays there. Pick General chat to leave it."))
         }
         // A change to one of the user's repos, by name: only My setup can make it, screen or not.
         if m.provider == .claude, RoutingInput.asksToChange(m.text, inRepos: await repos()) {

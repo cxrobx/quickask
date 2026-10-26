@@ -65,24 +65,25 @@ enum HarnessEval {
         .init(id: "10-24 spawn that creates", text: "spawn a herdr session that creates a stream deck plugin showing which agent session needs me", hands: true, want: [.herdr]),
         .init(id: "paraphrase: get another one", text: "could you get another herdr session on this", hands: true, want: [.herdr]),
         .init(id: "paraphrase: hand it to herdr", text: "hand this off to herdr", hands: true, want: [.herdr]),
+        .init(id: "paraphrase: what's broken, then spawn", text: "what's broken here? spawn a herdr session to fix it", hands: true, want: [.herdr]),
+        .init(id: "paraphrase: spawn one to explain", text: "can you spawn a herdr session to explain the codebase to a new hire", hands: true, want: [.herdr]),
         .init(id: "paraphrase: retry with go ahead", text: "go ahead",
               history: plain("please open a herdr session for the migration", "I can't open Herdr sessions."), hands: true, want: [.herdr]),
-        .init(id: "paraphrase: have herdr do it", text: "have herdr do the cleanup", hands: true, want: [.herdr],
-              gap: "\"have herdr do X\" has no launch verb and no \"in herdr\""),
+        .init(id: "paraphrase: have herdr do it", text: "have herdr do the cleanup", hands: true, want: [.herdr]),
 
         // Follow-ups in a My setup thread (wrong-route, 10-25: still open after the 10-22 fix).
         .init(id: "10-25 confirm it still works", text: "Just to confirm both services still work, right?",
               history: mySetup("tighten docker access for the two containers", "Done: the socket mount is gone from both."), previous: .personal,
-              hands: true, want: [.personal], gap: "a My setup follow-up needs the router's follow_up yes; it scored 0.56 on one this obvious"),
+              hands: true, want: [.personal]),
         .init(id: "10-25 confirm, nothing on screen", text: "Just to confirm both services still work, right?",
               history: mySetup("tighten docker access for the two containers", "Done: the socket mount is gone from both."), previous: .personal, front: .none,
-              hands: true, want: [.personal], gap: "with no window in front the router is never asked, so a My setup follow-up goes to General"),
+              hands: true, want: [.personal]),
         .init(id: "10-25 cont after an empty reply", text: "cont",
               history: mySetup("add cmd z to the composer", ""), previous: .personal,
-              hands: true, want: [.personal], gap: "\"cont\" isn't scored a follow-up reliably; the route resets to no tools"),
+              hands: true, want: [.personal]),
         .init(id: "10-25 I dont get this", text: "I dont get this: how do those two containers have so much access?",
               history: mySetup("check my nas security sessions", "Two containers can drive Docker itself."), previous: .personal,
-              hands: true, want: [.personal], gap: "a My setup follow-up needs the router's follow_up yes"),
+              hands: true, want: [.personal]),
         .init(id: "10-22 review after a browser turn", text: "review the dock and ensure we didn't miss anything",
               history: mySetup("fill the form in my browser", "Filled every field.", tools: ["zen-ext · fill"]), previous: .personal, front: .browser,
               hands: true, want: [.personal]),
@@ -137,8 +138,8 @@ enum HarnessEval {
         .init(id: "neg: don't spawn", text: "Don't spawn a herdr session, just answer here", hands: false, want: [.general, .screen, .personal]),
         .init(id: "neg: a session crashed", text: "I had a herdr session crash yesterday, what usually causes that?", hands: false, want: [.general, .screen, .personal]),
         .init(id: "neg: can you explain", text: "can you explain a herdr session?", hands: false, want: [.general, .screen]),
-        .init(id: "neg: start by explaining", text: "start by explaining what a tab is in herdr", hands: false, want: [.general, .screen],
-              gap: "\"start\" plus the word herdr reads as a launch request"),
+        .init(id: "neg: start by explaining", text: "start by explaining what a tab is in herdr", hands: false, want: [.general, .screen]),
+        .init(id: "neg: let me know", text: "let me know if herdr supports split panes", hands: false, want: [.general, .screen]),
         .init(id: "neg: should I move", text: "Should I move to herdr from tmux?", hands: false, want: [.general, .screen]),
         .init(id: "neg: try again after chat", text: "try again", history: plain("write a haiku about rain", "Rain on tin roofs..."), hands: false, want: [.general, .screen]),
         .init(id: "neg: lasagna", text: "How do I cook lasagna?", hands: false, want: [.general]),
@@ -163,7 +164,7 @@ enum HarnessEval {
             let started = RouteDecision.looksForChatFolder(message, gates, directory: nil)
                 ? HerdrInference.chatFolder(question: item.text, imageText: "", workspaces: workspaces, taskRepo: { _ in nil }).map { URL(fileURLWithPath: $0) } : nil
             let screen = front != nil && RouteDecision.readsScreen(message, gates, started: started)
-            let step = await RouteDecision.next(message, gates, started: started, images: item.images, screen: screen) { repos }
+            let step = await RouteDecision.next(message, gates, started: started, images: item.images, screen: screen, previous: item.previous) { repos }
             switch step {
             case .herdr: results.append(.init(item: item, outcome: .herdr, routed: false))
             case .task: results.append(.init(item: item, outcome: .task, routed: false))
