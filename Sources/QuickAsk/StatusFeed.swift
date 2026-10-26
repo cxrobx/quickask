@@ -10,7 +10,7 @@ enum ChatState: String, Codable {
     case needsYou = "needs-you"
     /// The answer finished while that tab wasn't in front of you, and you haven't opened it since.
     case answered
-    /// You've read it, but the chat still has the "still on me" ring: Jev's FollowUpCheck
+    /// You've read it, but the chat still has the "still on me" ring: FollowUpCheck
     /// or your own right-click says you owe a next step. Open tab or not.
     case stillOnYou = "still-on-you"
 }

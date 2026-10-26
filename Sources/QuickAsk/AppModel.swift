@@ -76,7 +76,7 @@ final class AppModel: ObservableObject {
     private var submittedHandoff: TaskHandoffRequest?
     @Published var routingEngine: String { didSet { preferences.set(routingEngine, forKey: "routingEngine") } }
     @Published var routingThreshold: Double { didSet { preferences.set(routingThreshold, forKey: "routingThreshold") } }
-    /// Ask Jev after each answer whether the chat is still on you (FollowUpCheck).
+    /// Ask after each answer whether the chat is still on you (FollowUpCheck).
     @Published var followUpCheck: Bool { didSet { preferences.set(followUpCheck, forKey: "followUpCheck") } }
     @Published var cxmailMCPPath: String { didSet { preferences.set(cxmailMCPPath, forKey: "cxmailMCPPath") } }
     @Published var cxtasksMCPPath: String { didSet { preferences.set(cxtasksMCPPath, forKey: "cxtasksMCPPath") } }
@@ -214,7 +214,8 @@ final class AppModel: ObservableObject {
         }
         refreshScreenContext?()
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        let transfer = herdrReview || (!truth && !taskReview && HerdrHandoff.requestsTransfer(text) && !Self.requestsTaskCreation(text))
+        let retried = herdrReview || truth || taskReview ? nil : HerdrHandoff.retriedRequest(text, history: messages)
+        let transfer = herdrReview || retried != nil || (!truth && !taskReview && HerdrHandoff.requestsTransfer(text) && !Self.requestsTaskCreation(text))
         let needsScreenForTransfer = HerdrHandoff.referencesScreen(text) || { if case .window = contextChoice { return true }; return false }()
         // Only My setup can open a link (web fetch, and the user's browser for sites that refuse it).
         let link = !truth && contextChoice == .auto && !controlEnabled && provider == .claude && Self.asksToOpenLink(text)
@@ -337,7 +338,7 @@ final class AppModel: ObservableObject {
                     self.finishRouting(run); self.status = "Your question changed. Send it again to prepare the transfer."; return
                 }
                 self.finishRouting(run); self.herdrDetailsExpanded = false
-                var proposal = HerdrProposal.make(question: text, history: self.messages, attachments: self.attachments, snapshot: snapshot, provider: self.provider,
+                var proposal = HerdrProposal.make(question: retried ?? text, history: self.messages, attachments: self.attachments, snapshot: snapshot, provider: self.provider,
                                                   previousDocument: self.lastReferencedDocument, workspaces: projects,
                                                   inferenceHistory: Array(self.messages.dropFirst(self.lastDocumentMessageCount)), imageText: imageText)
                 // You asked for Herdr, so it opens now; the card is for a choice only you can make.

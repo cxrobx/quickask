@@ -919,9 +919,9 @@ struct PopupView: View {
                 }
             }
             VStack(alignment: .leading, spacing: 8) {
-                Toggle("Flag chats still on me (Jev)", isOn: $model.followUpCheck)
+                Toggle("Flag chats still on me", isOn: $model.followUpCheck)
                     .toggleStyle(.switch).controlSize(.small).font(appFont(size: 12))
-                Text("After each answer, sends the text of your last question and the answer, never images or screen context, to Jev with TYPESAFE_API_KEY. If you still owe a next step, the chat gets a blue ring in Recent chats. Right-click a chat to change it.")
+                Text("After each answer, asks Claude on Haiku (else Codex) whether you still owe a next step, run bare with no tools or MCP servers. Jev with TYPESAFE_API_KEY answers only when neither CLI does. Only the text of your last question and the answer is sent, never images or screen context. If you do, the chat gets a blue ring in Recent chats. Right-click a chat to change it.")
                     .font(appFont(size: 11)).foregroundStyle(muted).fixedSize(horizontal: false, vertical: true)
             }
             ForEach([Provider.codex, .claude]) { provider in

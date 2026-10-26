@@ -97,6 +97,46 @@ func verifyChatHistory(check: (Bool, String) -> Void) async throws {
     check(FollowUpCheck.parse(["answers": [name: ["type": "refusal"]]]) == nil && FollowUpCheck.parse(["answers": [name: ["noul": true]]]) == nil
           && FollowUpCheck.parse(["answers": [name: ["noul": 1.5]]]) == nil && FollowUpCheck.parse([:]) == nil,
           "Follow-up: a refusal or malformed answer is no judgment")
+    let claudeArgs = FollowUpCheck.cliArguments(.claude, directory: "/tmp/empty", output: "/tmp/answer")
+    check(["--safe-mode", "--strict-mcp-config", "--no-session-persistence", "--disable-slash-commands"].allSatisfy(claudeArgs.contains)
+          && claudeArgs.contains("haiku") && claudeArgs[claudeArgs.firstIndex(of: "--tools")! + 1] == ""
+          && claudeArgs[claudeArgs.firstIndex(of: "--setting-sources")! + 1] == "" && !claudeArgs.contains("--bare"),
+          "Follow-up: Claude judges on Haiku with no tools, MCP servers or settings, on the subscription login")
+    let codexArgs = FollowUpCheck.cliArguments(.codex, directory: "/tmp/empty", output: "/tmp/answer")
+    check(["--ephemeral", "--ignore-user-config", "read-only"].allSatisfy(codexArgs.contains)
+          && codexArgs[codexArgs.firstIndex(of: "--cd")! + 1] == "/tmp/empty" && codexArgs.last == "-",
+          "Follow-up: Codex judges ephemeral and read-only from the empty folder, ignoring user config")
+    check(FollowUpCheck.parseCLI(.claude, #"{"is_error":false,"result":"0.85"}"#) == 0.85 && FollowUpCheck.parseCLI(.codex, "0.10\n") == 0.1
+          && FollowUpCheck.parseCLI(.claude, #"{"is_error":true,"result":"0.9"}"#) == nil && FollowUpCheck.parseCLI(.codex, "Probably 0.9") == nil
+          && FollowUpCheck.parseCLI(.claude, #"{"result":"It asks a question.\n\n**0.92**"}"#) == 0.92
+          && FollowUpCheck.parseCLI(.codex, "1.5") == nil && FollowUpCheck.parseCLI(.claude, "0.9") == nil,
+          "Follow-up: a CLI's answer counts only when its last line is one number from 0 to 1")
+    let cliPrompt = FollowUpCheck.cliPrompt(question: "Q", answer: String(repeating: "a", count: 3000) + String(repeating: "b", count: 3000))
+    check(cliPrompt.hasPrefix("<user_question>\nQ\n") && cliPrompt.contains("aaa\n…\nbbb") && cliPrompt.count < 4200,
+          "Follow-up: the CLIs get the same trimmed question and answer as Jev")
+    // Fake CLIs: one that notes when two checks overlap, one that never answers.
+    let fakes = directory.appendingPathComponent("fake-cli", isDirectory: true)
+    try FileManager.default.createDirectory(at: fakes, withIntermediateDirectories: true)
+    let busy = fakes.appendingPathComponent("busy").path, overlap = fakes.appendingPathComponent("overlap").path
+    let quick = fakes.appendingPathComponent("claude").path, stuck = fakes.appendingPathComponent("stuck").path
+    try """
+    #!/bin/sh
+    cat > /dev/null
+    [ -e '\(busy)' ] && touch '\(overlap)'
+    touch '\(busy)'; pwd > '\(fakes.path)/cwd'; sleep 0.3; rm -f '\(busy)'
+    echo '{"is_error":false,"result":"0.9"}'
+    """.write(toFile: quick, atomically: true, encoding: .utf8)
+    try "#!/bin/sh\nexec sleep 30\n".write(toFile: stuck, atomically: true, encoding: .utf8)
+    for file in [quick, stuck] { try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: file) }
+    async let firstCheck = FollowUpCheck.judge(question: "Q", answer: "Want me to?", paths: [.claude: quick], judges: [.claude])
+    async let secondCheck = FollowUpCheck.judge(question: "Q", answer: "Want me to?", paths: [.claude: quick], judges: [.claude])
+    let verdicts = await [firstCheck, secondCheck]
+    let cwd = (try? String(contentsOfFile: fakes.path + "/cwd", encoding: .utf8))?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    check(verdicts == [true, true] && !FileManager.default.fileExists(atPath: overlap), "Follow-up: checks run one at a time, and 0.9 clears Haiku's bar")
+    check(cwd.contains("quickask-follow-up-") && !FileManager.default.fileExists(atPath: cwd), "Follow-up: a CLI judges from an empty folder that's removed afterwards")
+    let started = Date()
+    let timedOut = await FollowUpCheck.score(.claude, question: "Q", answer: "A", customPath: stuck, timeout: 1)
+    check(timedOut == nil && Date().timeIntervalSince(started) < 5, "Follow-up: a CLI that doesn't answer in time is stopped and gives no judgment")
 
     final class Judge { var verdict: Bool? = true; var asked: [String] = [] }
     let judge = Judge()
