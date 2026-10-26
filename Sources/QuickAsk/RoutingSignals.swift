@@ -498,3 +498,120 @@ struct ScreenPayload: Encodable {
         project = plan.project; self.screenshotAttached = screenshotAttached; uncertain = plan.scope == .all
     }
 }
+
+/// Where one sent message goes, decided from facts gathered beforehand and nothing else, so the whole
+/// chain runs in a test (Tests/HarnessEval.swift) as it runs in AppModel.send, which gathers the facts.
+/// The order is the precedence: the first step that claims the message takes it.
+enum RouteDecision {
+    /// What is known when Send is pressed.
+    struct Message {
+        var text: String
+        var history: [ChatMessage] = []
+        var provider: Provider = .claude
+        var choice: ContextChoice = .auto
+        var control = false
+        var taskReview = false
+        var herdrReview = false
+        /// The window Auto would read: the front one on the popup's display.
+        var front: ContextWindow? = nil
+        /// The last reply showed a page this chat is working on.
+        var shownPage = false
+    }
+
+    /// The decisions made before anything is gathered; they also say what to gather.
+    struct Gates: Equatable {
+        var truth = false
+        /// A retry of the Herdr request this text names, when it is one ("try again").
+        var retried: String? = nil
+        var transfer = false
+        var link = false
+        var browse = false
+        var page = false
+        /// Herdr needs the screen too: the request points at what is on it.
+        var transferNeedsScreen = false
+    }
+
+    nonisolated static func gates(_ m: Message) -> Gates {
+        var g = Gates()
+        let auto = m.choice == .auto && !m.control && m.provider == .claude
+        g.truth = !m.taskReview && !m.herdrReview && AppModel.truthTarget(in: m.text) != nil
+        g.retried = m.herdrReview || g.truth || m.taskReview ? nil : HerdrHandoff.retriedRequest(m.text, history: m.history)
+        g.transfer = m.herdrReview || g.retried != nil
+            || (!g.truth && !m.taskReview && HerdrHandoff.requestsTransfer(m.text) && !AppModel.requestsTaskCreation(m.text))
+        g.transferNeedsScreen = HerdrHandoff.referencesScreen(m.text) || { if case .window = m.choice { return true }; return false }()
+        // Only My setup can open a link (web fetch, and the user's browser for sites that refuse it).
+        g.link = !g.truth && auto && AppModel.asksToOpenLink(m.text)
+        // Only My setup drives the user's browser (zen-ext); with Control app off, every other route has no hands.
+        // A question about the browser window right after a reply that drove it continues that work, whatever the router
+        // scores: "review the dock and ensure we didn't miss anything" went to the screen route, which has no hands.
+        g.browse = !g.truth && !g.link && auto
+            && (AppModel.asksToUseBrowser(m.text) || AppModel.continuesBrowserWork(history: m.history, front: m.front))
+        // Only My setup can write the page the reply shows, and edit it when the user asks for changes.
+        g.page = !g.truth && !g.link && !g.browse && !m.taskReview && !g.transfer && auto && (m.shownPage || AppModel.asksForPage(m.text))
+        return g
+    }
+
+    /// A new chat about one of your projects starts in its folder: worth looking for one.
+    nonisolated static func looksForChatFolder(_ m: Message, _ g: Gates, directory: URL?) -> Bool {
+        directory == nil && m.history.isEmpty && !m.control && m.provider == .claude && m.choice == .auto && !g.truth && !g.link && !g.transfer && !m.taskReview
+    }
+    nonisolated static func readsScreen(_ m: Message, _ g: Gates, started: URL?) -> Bool {
+        started == nil && !g.truth && m.choice != .general && m.choice != .personal && !g.link && !g.browse && (!g.transfer || g.transferNeedsScreen)
+    }
+    nonisolated static func checksMeeting(_ m: Message, _ g: Gates) -> Bool {
+        m.choice == .auto && !m.control && !g.link && !g.browse && !g.transfer && !m.taskReview && !g.truth
+    }
+
+    enum Step {
+        case herdr, task, meeting(String), answer(RoutePlan)
+        /// Control or a chosen window, and no window to use.
+        case noWindow
+        /// Routing is off: everything on screen goes, for the model to use or ignore.
+        case unrouted
+        /// The router decides (ContextRouter.assess, then RoutePlan.make).
+        case router
+    }
+
+    /// `started`: the folder a new chat about a project starts in. `directory`: the chat's own (`!cd`).
+    /// `screen`: the front window was captured. `repos` is read only when the step that needs it is reached.
+    nonisolated static func next(_ m: Message, _ g: Gates, started: URL? = nil, directory: URL? = nil, meeting: Bool = false,
+                                 images: Int = 0, screen: Bool, routingOff: Bool = false, repos: () async -> [String]) async -> Step {
+        if g.transfer { return .herdr }
+        // A truth check reads whatever it is given, so with Claude it runs where links open.
+        if g.truth { return .answer(m.provider == .claude ? .personal("A truth check runs with your Claude setup, so it can read any link.")
+                                                        : .general("A truth check with Codex uses what it already knows.")) }
+        if m.taskReview || AppModel.requestsTaskCreation(m.text) { return .task }
+        if meeting, images == 0, let kind = MeetingCopilot.pulseKind(m.text) { return .meeting(kind) }
+        // A chat set to a folder runs My setup from it; with Codex selected the answer says to pick Claude.
+        if let started { return .answer(.personal("This chat is about \(started.lastPathComponent), so it starts there with your Claude setup. Send !cd to change that.")) }
+        if let directory, !m.control { return .answer(.personal("This chat is in \(directory.lastPathComponent), so it runs with your Claude setup there.")) }
+        if g.link { return .answer(.personal("This message is a link to open, so it runs with your Claude setup.")) }
+        if g.browse { return .answer(.personal("This is about your browser, so it runs with your Claude setup.")) }
+        if g.page { return .answer(.personal(m.shownPage ? "This chat is working on a page, so it runs with your Claude setup."
+                                                         : "This asks for a page, so it runs with your Claude setup.")) }
+        if m.choice == .general { return .answer(.general("Selected General chat.")) }
+        // With Control on, the control route below has the hands; My setup has none (2026-10-24, "You can control my screen").
+        if m.choice == .personal && !m.control { return .answer(.personal("Selected My setup.")) }
+        if m.control || m.choice != .auto {
+            // Desktop control or an explicitly chosen window: exactly that window, all its tools.
+            guard let window = m.front else { return .noWindow }
+            return .answer(.init(scope: .screen, window: window, connector: AppConnector.matching(window.bundleID), writes: true,
+                                 screenshot: false, project: nil, explanation: "Selected \(window.appName)."))
+        }
+        // A change to one of the user's repos, by name: only My setup can make it, screen or not.
+        if m.provider == .claude, RoutingInput.asksToChange(m.text, inRepos: await repos()) {
+            return .answer(.personal("This asks to change one of your repositories, so it runs with your Claude setup."))
+        }
+        // Nothing on screen to route over, but only My setup can see the user's own things.
+        if !screen && m.provider == .claude && RoutingInput.refersToOwnThing(m.text) {
+            return .answer(.personal("This points at something of your own, so it runs with your Claude setup."))
+        }
+        if !screen {
+            // Nothing on screen to route over; a live meeting still brings its read-only tools.
+            var plan = RoutePlan.general("No screen context is visible.")
+            if meeting { plan.tools = [.meetingcopilot] }
+            return .answer(plan)
+        }
+        return routingOff ? .unrouted : .router
+    }
+}

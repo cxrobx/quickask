@@ -1680,6 +1680,11 @@ struct ProviderTests {
         let meetingPrompt = try PromptBuilder.make(messages: [.init(role: "user", text: "q")], context: meetingConfig)
         check(meetingPrompt.contains("meetingcopilot__pulse"), "The prompt explains the copilot's tools")
         check(ChatMessage(role: "assistant", text: "a", source: "meetingcopilot").provider == "meetingcopilot", "A check-in reply is labeled as the copilot's")
+        // The harness eval: real failures through the whole route decision, with the router assumed wrong.
+        let scorecard = HarnessEval.report(await HarnessEval.run())
+        scorecard.lines.forEach { print($0) }
+        check(scorecard.regressions.isEmpty, "Harness eval: every case outside a known gap lands right; failing: \(scorecard.regressions.joined(separator: ", "))")
+        check(scorecard.closed.isEmpty, "Harness eval: these gaps now pass, so remove their gap note: \(scorecard.closed.joined(separator: ", "))")
         print("PASS: \(count) provider and transport checks")
     }
 }

@@ -22,5 +22,5 @@ fi
   "$project_dir/Sources/QuickAsk/FollowUpCheck.swift" "$project_dir/Sources/QuickAsk/StatusFeed.swift" "$project_dir/Tests/StatusFeedTests.swift" \
   "$project_dir/Sources/QuickAsk/ChatHistory.swift" "$project_dir/Tests/ChatHistoryTests.swift" \
   "$project_dir/Tests/StreamingTests.swift" "$project_dir/Tests/VoiceTests.swift" \
-  "$project_dir/Tests/PopupLayoutTests.swift" "$project_dir/Tests/ProviderTests.swift" -o "$build_dir/tests"
+  "$project_dir/Tests/PopupLayoutTests.swift" "$project_dir/Tests/HarnessEval.swift" "$project_dir/Tests/ProviderTests.swift" -o "$build_dir/tests"
 "$build_dir/tests"

@@ -208,26 +208,16 @@ final class AppModel: ObservableObject {
         if let directory, !Self.isDirectory(directory) {
             status = "\(directory.path) is gone. Send !cd with another folder, or !cd alone to go back to your home folder."; focusToken += 1; return
         }
-        let truth = !taskReview && !herdrReview && Self.truthTarget(in: draft) != nil
+        let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        let shownPage = MarkdownBlocks.latestPage(in: messages.last(where: { $0.role == "assistant" && $0.complete }).map { [$0.text] } ?? [])
+        let message = RouteDecision.Message(text: text, history: messages, provider: provider, choice: contextChoice, control: controlEnabled,
+                                            taskReview: taskReview, herdrReview: herdrReview, front: candidateWindow, shownPage: shownPage != nil)
+        let gates = RouteDecision.gates(message)
+        let truth = gates.truth, retried = gates.retried, transfer = gates.transfer, link = gates.link, browse = gates.browse
         if truth && Self.truthTarget(in: draft)!.isEmpty && attachments.isEmpty && !messages.contains(where: { $0.role == "assistant" && $0.complete && !$0.text.isEmpty }) {
             status = "Nothing to check yet. Put a claim, link or image after /truthcheck."; focusToken += 1; return
         }
         refreshScreenContext?()
-        let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        let retried = herdrReview || truth || taskReview ? nil : HerdrHandoff.retriedRequest(text, history: messages)
-        let transfer = herdrReview || retried != nil || (!truth && !taskReview && HerdrHandoff.requestsTransfer(text) && !Self.requestsTaskCreation(text))
-        let needsScreenForTransfer = HerdrHandoff.referencesScreen(text) || { if case .window = contextChoice { return true }; return false }()
-        // Only My setup can open a link (web fetch, and the user's browser for sites that refuse it).
-        let link = !truth && contextChoice == .auto && !controlEnabled && provider == .claude && Self.asksToOpenLink(text)
-        // Only My setup drives the user's browser (zen-ext); with Control app off, every other route has no hands.
-        // A question about the browser window right after a reply that drove it continues that work, whatever the router
-        // scores: "review the dock and ensure we didn't miss anything" went to the screen route, which has no hands.
-        let browse = !truth && !link && contextChoice == .auto && !controlEnabled && provider == .claude
-            && (Self.asksToUseBrowser(text) || Self.continuesBrowserWork(history: messages, front: candidateWindow))
-        // Only My setup can write the page the reply shows, and edit it when the user asks for changes.
-        let shownPage = MarkdownBlocks.latestPage(in: messages.last(where: { $0.role == "assistant" && $0.complete }).map { [$0.text] } ?? [])
-        let page = !truth && !link && !browse && !taskReview && !transfer && contextChoice == .auto && !controlEnabled && provider == .claude
-            && (shownPage != nil || Self.asksForPage(text))
         let attached = attachments.map(\.id)
         // The router sees text only; it is told an image came with the question.
         let question = attached.isEmpty ? text : "\(text)\n[The user attached \(attached.count) image(s) to this question.]"
@@ -246,57 +236,33 @@ final class AppModel: ObservableObject {
             var turn = turn
             // A new chat about one of your projects starts in its folder, as if you had sent `!cd` there.
             var started: URL?
-            if turn.directory == nil, turn.history.isEmpty, !turn.control, provider == .claude, choice == .auto, !truth, !link, !transfer, !taskReview {
+            if RouteDecision.looksForChatFolder(message, gates, directory: turn.directory) {
                 let attachments = turn.attachments
                 let (workspaces, imageText) = await Task.detached { (ProjectRegistry.workspaces() + ProjectRegistry.localRepos(), HerdrInference.imageText(attachments)) }.value
                 started = HerdrInference.chatFolder(question: text, imageText: imageText, workspaces: workspaces).map { URL(fileURLWithPath: $0) }
                 turn.directory = started
             }
             let snapshot: ContextSnapshot?
-            if started == nil, !truth && choice != .general && choice != .personal && !link && !browse && (!transfer || needsScreenForTransfer), let window, let displayID {
+            if RouteDecision.readsScreen(message, gates, started: started), let window, let displayID {
                 snapshot = await Task.detached { await ScreenContextCapture.snapshot(window, displayID: displayID) }.value
             } else { snapshot = nil }
             // A live Meeting Copilot meeting brings its tools to Auto, wherever its panel is.
-            let meeting = choice == .auto && !turn.control && !link && !browse && !transfer && !taskReview && !truth ? await MeetingCopilot.liveSession() : nil
+            let meeting = RouteDecision.checksMeeting(message, gates) ? await MeetingCopilot.liveSession() : nil
             guard !Task.isCancelled, self.isCurrent(run) else { return }
             enum Next { case task, herdr, choose(String), answer(RoutePlan), meeting(String) }
             let next: Next
-            if transfer { next = .herdr }
-            // A truth check reads whatever it is given, so with Claude it runs where links open.
-            else if truth { next = .answer(provider == .claude ? .personal("A truth check runs with your Claude setup, so it can read any link.")
-                                                                    : .general("A truth check with Codex uses what it already knows.")) }
-            else if taskReview || Self.requestsTaskCreation(text) { next = .task }
-            else if meeting != nil, attached.isEmpty, let kind = MeetingCopilot.pulseKind(text) { next = .meeting(kind) }
-            // A chat set to a folder runs My setup from it; with Codex selected the answer says to pick Claude.
-            else if let directory = started { next = .answer(.personal("This chat is about \(directory.lastPathComponent), so it starts there with your Claude setup. Send !cd to change that.")) }
-            else if let directory = turn.directory, !turn.control { next = .answer(.personal("This chat is in \(directory.lastPathComponent), so it runs with your Claude setup there.")) }
-            else if link { next = .answer(.personal("This message is a link to open, so it runs with your Claude setup.")) }
-            else if browse { next = .answer(.personal("This is about your browser, so it runs with your Claude setup.")) }
-            else if page { next = .answer(.personal(shownPage != nil ? "This chat is working on a page, so it runs with your Claude setup."
-                                                                       : "This asks for a page, so it runs with your Claude setup.")) }
-            else if choice == .general { next = .answer(.general("Selected General chat.")) }
-            // With Control on, the control route below has the hands; My setup has none (2026-10-24, "You can control my screen").
-            else if choice == .personal && !turn.control { next = .answer(.personal("Selected My setup.")) }
-            else if turn.control || choice != .auto {
-                // Desktop control or an explicitly chosen window: exactly that window, all its tools.
-                guard let window else { self.finishRouting(run); self.report("No screen context is available. Select General chat or a visible app.", in: turn.sessionID); return }
-                next = .answer(.init(scope: .screen, window: window, connector: AppConnector.matching(window.bundleID), writes: true,
-                                     screenshot: false, project: nil, explanation: "Selected \(window.appName)."))
-            } else if provider == .claude, RoutingInput.asksToChange(text, inRepos: await Task.detached {
-                (ProjectRegistry.workspaces() + ProjectRegistry.localRepos()).map { ($0.path as NSString).lastPathComponent } }.value) {
-                // A change to one of the user's repos, by name: only My setup can make it, screen or not.
-                next = .answer(.personal("This asks to change one of your repositories, so it runs with your Claude setup."))
-            } else if snapshot == nil && provider == .claude && RoutingInput.refersToOwnThing(text) {
-                // Nothing on screen to route over, but only My setup can see the user's own things.
-                next = .answer(.personal("This points at something of your own, so it runs with your Claude setup."))
-            } else if snapshot == nil {
-                // Nothing on screen to route over; a live meeting still brings its read-only tools.
-                var plan = RoutePlan.general("No screen context is visible.")
-                if meeting != nil { plan.tools = [.meetingcopilot] }
-                next = .answer(plan)
-            } else if self.routingEngine == RoutingEngine.offTag {
-                next = .answer(.unrouted(windows: windows, candidate: snapshot))
-            } else {
+            let step = await RouteDecision.next(message, gates, started: started, directory: turn.directory, meeting: meeting != nil,
+                                                images: attached.count, screen: snapshot != nil, routingOff: self.routingEngine == RoutingEngine.offTag) {
+                await Task.detached { (ProjectRegistry.workspaces() + ProjectRegistry.localRepos()).map { ($0.path as NSString).lastPathComponent } }.value
+            }
+            switch step {
+            case .herdr: next = .herdr
+            case .task: next = .task
+            case .meeting(let kind): next = .meeting(kind)
+            case .answer(let plan): next = .answer(plan)
+            case .noWindow: self.finishRouting(run); self.report("No screen context is available. Select General chat or a visible app.", in: turn.sessionID); return
+            case .unrouted: next = .answer(.unrouted(windows: windows, candidate: snapshot))
+            case .router:
                 let started = Date()
                 var input = RoutingInput(question: question, history: history, imageCount: attached.count, windows: windows,
                                          candidate: snapshot, projects: await Task.detached { ProjectRegistry.projects() }.value,
@@ -558,7 +524,7 @@ final class AppModel: ObservableObject {
     /// The task review opens only when the user explicitly asks for a task ("create a task",
     /// "file this as a task", "turn this email into a task") or picks it from the context menu.
     /// The router never chooses it, and questions about tasks ("how do I create a task?") don't count.
-    static func requestsTaskCreation(_ text: String) -> Bool {
+    nonisolated static func requestsTaskCreation(_ text: String) -> Bool {
         let request = text.trimmingCharacters(in: .whitespacesAndNewlines)
         if request.range(of: "(?i)^(how|what|why|when|where|which|who)\\b", options: .regularExpression) != nil { return false }
         let article = "(?:a |an |new |another |the )*(?:cxtasks |tracked )?"
