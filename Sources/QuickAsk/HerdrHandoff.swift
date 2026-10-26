@@ -67,7 +67,11 @@ enum HerdrInference {
     /// Where a folder found in text may open a session, unless it is a registered workspace: under these roots, outside any app or other package.
     /// 2026-10-24: a reply's `/Applications/Synology Drive Client.app` opened two sessions inside the bundle.
     static var workRoots = [FileManager.default.homeDirectoryForCurrentUser.resolvingSymlinksInPath().standardizedFileURL.path]
+    /// Never the home folder itself: Claude Code doesn't save trust there, so a session opened in it asks every time.
+    /// 2026-10-26: a chat that began over a Ghostty tab sitting in ~ remembered `file:///Users/<you>/` as its document,
+    /// and the next Herdr handoff opened in ~ behind a trust prompt instead of in the general folder.
     static func workable(_ folder: String) -> Bool {
+        guard folder != FileManager.default.homeDirectoryForCurrentUser.resolvingSymlinksInPath().standardizedFileURL.path else { return false }
         guard workRoots.contains(where: { folder == $0 || folder.hasPrefix($0.hasSuffix("/") ? $0 : $0 + "/") }) else { return false }
         var url = URL(fileURLWithPath: folder)
         while url.path != "/" {

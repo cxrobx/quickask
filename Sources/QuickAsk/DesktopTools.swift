@@ -38,6 +38,8 @@ final class DesktopMCPServer {
     /// Actions on known elements. Coordinates need a screenshot between steps, and wait would
     /// stretch a batch past a CLI's tool timeout.
     static let batchable: Set<String> = ["click_element", "set_value", "choose_option", "type_text", "press_key", "select_menu", "scroll"]
+    /// iPhone Mirroring scrolls only from the system's input stream, never from input posted to its process.
+    static let mirroringBundle = "com.apple.ScreenContinuity"
 
     private struct Capture { let id: UInt32; let rect: CGRect; let width: Int; let height: Int }
 
@@ -136,7 +138,7 @@ final class DesktopMCPServer {
                  ["element_id": integer, "button": button, "count": count, "foreground": foreground], ["element_id"]),
             tool("click_coordinates", "Click at pixel coordinates in the latest screenshot. For custom-drawn controls.",
                  ["x": number, "y": number, "button": button, "count": count, "foreground": foreground], ["x", "y"]),
-            tool("drag_coordinates", "Drag between two pixel points in the latest screenshot: sliders, plugin knobs, canvases.",
+            tool("drag_coordinates", "Drag between two pixel points in the latest screenshot: sliders, plugin knobs, canvases. It doesn't scroll iPhone Mirroring; use scroll there.",
                  ["from_x": number, "from_y": number, "to_x": number, "to_y": number, "foreground": foreground], ["from_x", "from_y", "to_x", "to_y"]),
             tool("hover", "Move the pointer over an element or a screenshot point to reveal hover-only controls or tooltips.",
                  ["element_id": integer, "x": number, "y": number]),
@@ -148,9 +150,9 @@ final class DesktopMCPServer {
                  ["text": str, "element_id": integer, "foreground": foreground], ["text"]),
             tool("press_key", "Press a key or chord, e.g. Return, Tab, Escape, command+a, command+s, shift+Tab, Left, F5.",
                  ["key": str, "foreground": foreground], ["key"]),
-            tool("scroll", "Scroll at an element, a screenshot point, or the focused window's center.",
+            tool("scroll", "Scroll at an element, a screenshot point, or the focused window's center. In the foreground it scrolls like a mouse wheel; iPhone Mirroring always scrolls that way.",
                  ["direction": ["type": "string", "enum": ["up", "down", "left", "right"]], "amount": ["type": "integer", "description": "Pixels, 1-1200 (default 400)."],
-                  "element_id": integer, "x": number, "y": number], ["direction"]),
+                  "element_id": integer, "x": number, "y": number, "foreground": foreground], ["direction"]),
             tool("select_menu", "Choose a menu-bar command by its path, e.g. [\"File\", \"Export…\"]. Works in the background. A partial or empty path lists that menu's items.",
                  ["path": ["type": "array", "items": str]], ["path"]),
             tool("batch_actions", "Run up to \(Self.batchLimit) element actions in order and report what changed once, at the end. For steps you already know, e.g. set two fields, choose an option, press Return. Stops at the first step that fails or changes nothing.",
@@ -258,11 +260,16 @@ final class DesktopMCPServer {
     }
 
     /// Seconds since the user last pressed a key, clicked or scrolled. Events QuickAsk sends to
-    /// one app don't count: they never enter the hardware event stream.
+    /// one app don't count: they never enter the hardware event stream. A foreground scroll does
+    /// enter it, so a last wheel event at the moment `systemScroll` posted one is ours, not theirs.
     static func userIdleSeconds() -> Double {
-        [CGEventType.keyDown, .leftMouseDown, .rightMouseDown, .otherMouseDown, .scrollWheel]
-            .map { CGEventSource.secondsSinceLastEventType(.hidSystemState, eventType: $0) }.min() ?? .infinity
+        [CGEventType.keyDown, .leftMouseDown, .rightMouseDown, .otherMouseDown, .scrollWheel].map { type in
+            let seconds = CGEventSource.secondsSinceLastEventType(.hidSystemState, eventType: type)
+            if type == .scrollWheel, let posted = lastSystemScroll, abs(Date().timeIntervalSince(posted) - seconds) < 0.1 { return .infinity }
+            return seconds
+        }.min() ?? .infinity
     }
+    private static var lastSystemScroll: Date?
 
     /// The user is working in the controlled app themselves: input would interleave with theirs.
     static func userTookOver(targetIsFront: Bool, idleSeconds: Double) -> Bool { targetIsFront && idleSeconds < 1.5 }
@@ -307,6 +314,47 @@ final class DesktopMCPServer {
         try checkLease()
         defer { if let previous, previous.processIdentifier != targetPID { previous.activate(options: []) } }
         try body()
+    }
+
+    /// A mouse-wheel scroll through the system's input stream, for apps that ignore input posted to their process.
+    /// The pointer moves over `point` for the gesture and goes back after. iPhone Mirroring scrolls only after a
+    /// mouseMoved at the point (a warp alone sends none); then continuous 20-pixel steps pan its lists by about
+    /// 0.77 of what was sent, without fling. Only with the app in front: these events go to whatever is under the
+    /// pointer. Stops, leaving the pointer, if the user moves it.
+    static func systemScroll(at point: CGPoint, dx: Int32, dy: Int32, stillValid: () throws -> Void) throws {
+        let source = CGEventSource(stateID: .hidSystemState)
+        let saved = CGEvent(source: nil)?.location
+        CGWarpMouseCursorPosition(point)
+        CGEvent(mouseEventSource: source, mouseType: .mouseMoved, mouseCursorPosition: point, mouseButton: .left)?.post(tap: .cghidEventTap)
+        usleep(20_000)
+        let steps = Int32(max(1, (max(abs(dx), abs(dy)) + 19) / 20))
+        var sent = (x: Int32(0), y: Int32(0))
+        for step in 1...steps {
+            try stillValid()
+            guard let at = CGEvent(source: nil)?.location, abs(at.x - point.x) < 2, abs(at.y - point.y) < 2 else {
+                throw ProviderRunError(message: "The user moved the pointer, so the scroll stopped. Let them finish, then try again.")
+            }
+            let x = dx * step / steps - sent.x, y = dy * step / steps - sent.y
+            guard let event = CGEvent(scrollWheelEvent2Source: source, units: .pixel, wheelCount: 2, wheel1: -y, wheel2: -x, wheel3: 0) else { continue }
+            event.location = point
+            event.setIntegerValueField(.scrollWheelEventIsContinuous, value: 1)
+            event.post(tap: .cghidEventTap)
+            lastSystemScroll = Date()
+            sent = (sent.x + x, sent.y + y)
+            usleep(16_000)
+        }
+        if let saved { CGWarpMouseCursorPosition(saved) }
+    }
+
+    /// The topmost window under `point`, whoever owns it: input through the system lands there. This process's
+    /// own windows (the agent cursor) are skipped, since they ignore mouse events; QuickAsk's popup is not.
+    /// Below the menu bar's level, so a system overlay that lets clicks through doesn't count as covering.
+    private func topWindow(at point: CGPoint) -> UInt32? {
+        let own = ProcessInfo.processInfo.processIdentifier, menuBar = Int(CGWindowLevelForKey(.mainMenuWindow))
+        return ((CGWindowListCopyWindowInfo(.optionOnScreenOnly, kCGNullWindowID) as? [[String: Any]]) ?? []).first { item in
+            (item[kCGWindowOwnerPID as String] as? Int32) != own && (item[kCGWindowLayer as String] as? Int ?? 0) < menuBar
+                && (item[kCGWindowAlpha as String] as? Double ?? 1) > 0 && bounds(item)?.contains(point) == true
+        }.flatMap { ($0[kCGWindowNumber as String] as? NSNumber)?.uint32Value }
     }
 
     /// Background unless asked (or unless this macOS lacks the background route).
@@ -511,8 +559,17 @@ final class DesktopMCPServer {
             let window = try requireWindow(at: point)
             cursor.move(to: point, above: window)
             let (dx, dy): (Int32, Int32) = switch direction { case "down": (0, amount); case "up": (0, -amount); case "right": (amount, 0); default: (-amount, 0) }
-            BackgroundInput.scroll(pid: targetPID, window: window, at: point, dx: dx, dy: dy)
-            return try observe("Scrolled \(direction).", pixel: args["x"] != nil)
+            // 2026-10-26: iPhone Mirroring ignored every scroll and drag posted to its process, in front or not, and
+            // scrolled only from wheel steps through the system's input stream with the pointer over it.
+            guard foreground || originalBundle == Self.mirroringBundle else {
+                BackgroundInput.scroll(pid: targetPID, window: window, at: point, dx: dx, dy: dy)
+                return try observe("Scrolled \(direction) (background).", pixel: args["x"] != nil)
+            }
+            try inForeground {
+                guard topWindow(at: point) == window else { throw ProviderRunError(message: "Another window covers that point. Take a fresh screenshot and scroll where the app shows.") }
+                try Self.systemScroll(at: point, dx: dx, dy: dy) { try checkLease() }
+            }
+            return try observe("Scrolled \(direction) (foreground).", pixel: args["x"] != nil)
 
         case "select_menu":
             guard let path = args["path"] as? [String], path.count <= 8 else { throw ProviderRunError(message: "Path must be a list of menu titles.") }

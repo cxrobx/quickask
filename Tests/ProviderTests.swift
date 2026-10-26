@@ -1534,6 +1534,11 @@ struct ProviderTests {
         check(fixThis.workspace.isEmpty && !fixThis.needsTargetChoice, "An app bundle a reply mentioned is not a working folder; the session opens in the general folder")
         check(HerdrInference.targets(question: "open `\(bundle.deletingLastPathComponent().path)` in herdr", history: [], snapshot: nil, previousDocument: nil, workspaces: []).isEmpty, "Not even when the request names the bundle itself")
         check(HerdrInference.targets(question: "continue in herdr", history: [.init(role: "user", text: "look at `/Applications`")], snapshot: nil, previousDocument: nil, workspaces: []).isEmpty, "A folder outside the home folder is not a working folder")
+        // 2026-10-26: a terminal tab in ~ is remembered as the chat's document (Ghostty's AXDocument is its working folder).
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        check(HerdrProposal.make(question: "spawn a herdr session to try these updates", history: conversation, attachments: [], snapshot: nil, provider: .claude, previousDocument: home.absoluteString).workspace.isEmpty,
+              "A terminal sitting in the home folder doesn't open the session there; Claude Code never saves trust for it")
+        check(HerdrInference.targets(question: "continue in herdr", history: [.init(role: "user", text: "work in `~/`")], snapshot: nil, previousDocument: nil, workspaces: []).isEmpty, "Nor does naming the home folder itself")
         let looseFolder = directory.appendingPathComponent("loose-folder"); try FileManager.default.createDirectory(at: looseFolder, withIntermediateDirectories: true)
         let folderReply: [ChatMessage] = [.init(role: "assistant", text: "Saved it to `\(looseFolder.path)`.")]
         check(HerdrInference.targets(question: "continue in herdr", history: folderReply, snapshot: nil, previousDocument: nil, workspaces: []).isEmpty, "A bare folder from a reply needs a known workspace")
