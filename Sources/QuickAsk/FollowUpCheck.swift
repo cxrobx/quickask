@@ -21,12 +21,12 @@ enum FollowUpCheck {
     /// that end on a question or an offer scored 0.90-0.98, finished ones 0.08-0.09, and Herdr
     /// handoff confirmations 0.54-0.72, so CXTasks' 0.65 was too low. Provisional.
     static let bar = 0.8
-    /// The CLIs' bars, from `scripts/calibrate-follow-up.sh` on every exchange in the saved
-    /// chats (2026-10-26, 63 answers, labelled by hand). Haiku scored finished answers 0.02-0.35
-    /// and open ones 0.72-0.97, one outlier each way (0.80, 0.45), so its bar sits in the gap;
-    /// at 0.8 it missed answers that left you steps to try. Codex answers 0.00 or 0.93-1.00 and
-    /// missed four that Haiku caught, which is why it's the fallback.
-    static let cliBars: [Judge: Double] = [.claude: 0.55, .codex: 0.8]
+    /// The CLIs' bars, from `scripts/calibrate-follow-up.sh` and a rerun on 59 hand-labelled
+    /// answers from the saved chats (2026-10-26). Haiku at low effort, scored twice: 2-3
+    /// mistakes at 0.7, same as high effort and as Jev at 0.8, with less drift between runs
+    /// than its default effort (which put one answer at 0.08, then 0.85). Codex answers 0.00
+    /// or 0.93-1.00 and missed four that Haiku caught, which is why it's the fallback.
+    static let cliBars: [Judge: Double] = [.claude: 0.7, .codex: 0.8]
     static let timeout: TimeInterval = 20
     static let model = "jev-1.13.0"
     static let questionName = "owes_user_action"
@@ -78,7 +78,7 @@ enum FollowUpCheck {
             return ["--print", "--output-format", "json", "--no-session-persistence", "--safe-mode",
                     "--setting-sources", "", "--settings", "{\"disableAllHooks\":true}", "--tools", "",
                     "--strict-mcp-config", "--mcp-config", "{\"mcpServers\":{}}", "--disable-slash-commands",
-                    "--permission-mode", "dontAsk", "--model", "haiku", "--system-prompt", cliInstructions]
+                    "--permission-mode", "dontAsk", "--model", "haiku", "--effort", "low", "--system-prompt", cliInstructions]
         case .codex:
             return ["exec", "--ephemeral", "--skip-git-repo-check", "--ignore-user-config", "--sandbox", "read-only",
                     "--color", "never", "--cd", directory, "--model", "gpt-6-luna",

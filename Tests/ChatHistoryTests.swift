@@ -99,7 +99,7 @@ func verifyChatHistory(check: (Bool, String) -> Void) async throws {
           "Follow-up: a refusal or malformed answer is no judgment")
     let claudeArgs = FollowUpCheck.cliArguments(.claude, directory: "/tmp/empty", output: "/tmp/answer")
     check(["--safe-mode", "--strict-mcp-config", "--no-session-persistence", "--disable-slash-commands"].allSatisfy(claudeArgs.contains)
-          && claudeArgs.contains("haiku") && claudeArgs[claudeArgs.firstIndex(of: "--tools")! + 1] == ""
+          && claudeArgs.contains("haiku") && claudeArgs[claudeArgs.firstIndex(of: "--effort")! + 1] == "low" && claudeArgs[claudeArgs.firstIndex(of: "--tools")! + 1] == ""
           && claudeArgs[claudeArgs.firstIndex(of: "--setting-sources")! + 1] == "" && !claudeArgs.contains("--bare"),
           "Follow-up: Claude judges on Haiku with no tools, MCP servers or settings, on the subscription login")
     let codexArgs = FollowUpCheck.cliArguments(.codex, directory: "/tmp/empty", output: "/tmp/answer")
