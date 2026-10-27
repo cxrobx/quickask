@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import UniformTypeIdentifiers
 
 /// One block of an answer, from Foundation's full Markdown parse. Inline styling (bold,
 /// italic, code, links) stays on each block's AttributedString, which Text renders.
@@ -223,7 +224,7 @@ struct MarkdownView: View, Equatable {
                     if segment.blocks.count > 1 || MarkdownProse.flows(segment.blocks[0]) {
                         ProseText(blocks: segment.blocks, color: NSColor(color), accent: NSColor(accent), vaultFont: vaultFont)
                     } else {
-                        view(for: segment.blocks[0])
+                        view(for: segment.blocks[0], in: blocks)
                     }
                 }
                 .padding(.top, segment.id == 0 ? 0 : MarkdownProse.spacing(before: segment.blocks[0], after: blocks[segment.id - 1]))
@@ -235,7 +236,7 @@ struct MarkdownView: View, Equatable {
     }
 
     /// Tables, rules and media: everything the prose view can't flow as text.
-    @ViewBuilder private func view(for block: MarkdownBlock) -> some View {
+    @ViewBuilder private func view(for block: MarkdownBlock, in blocks: [MarkdownBlock]) -> some View {
         switch block.kind {
         case .table(let header, let rows):
             // Cells wrap to the window instead of scrolling sideways: the layout shares the
@@ -255,7 +256,12 @@ struct MarkdownView: View, Equatable {
         case .rule:
             Rectangle().fill(Color.white.opacity(0.12)).frame(height: 1).padding(.vertical, 4)
         case .image(let url, let alt):
-            MarkdownImage(url: url, alt: alt)
+            // Quick Look steps through the reply's local images; a web image previews alone.
+            let files = blocks.compactMap { other -> (Int, URL)? in
+                if case .image(let target, _) = other.kind, let file = MarkdownBlocks.fileURL(target) { return (other.id, file) }
+                return nil
+            }
+            MarkdownImage(url: url, alt: alt, group: files.map { .file($0.1) }, index: files.firstIndex { $0.0 == block.id } ?? 0)
         case .video(let url, let alt):
             InlineVideo(url: url, alt: alt)
         case .page(let url, let alt):
@@ -342,21 +348,30 @@ struct TableLayout: Layout {
 struct MarkdownImage: View {
     let url: URL
     let alt: String
+    /// The reply's local images and this one's place among them, so Quick Look's arrows step
+    /// through the reply as Finder's step through a folder.
+    var group: [PreviewImage] = []
+    var index = 0
     @State private var load = false
+    @State private var remote: (image: NSImage, data: Data, fileExtension: String)?
+    @State private var failed = false
+
+    /// Tall enough to make out a screenshot's layout; Quick Look shows it full size.
+    static let maxHeight: CGFloat = 480
 
     var body: some View {
         if let file = MarkdownBlocks.fileURL(url) {
-            if let image = NSImage(contentsOf: file) { frame(Image(nsImage: image).resizable().aspectRatio(contentMode: .fit), size: image.size) }
-            else { caption("Image not found: \(file.path)", symbol: "photo") }
+            if let image = NSImage(contentsOf: file) {
+                frame(image).modifier(QuickLookable(group: group.isEmpty ? [.file(file)] : group, index: index))
+            } else { caption("Image not found: \(file.path)", symbol: "photo") }
         } else if url.scheme == "https" || url.scheme == "http" {
-            if load {
-                AsyncImage(url: url) { phase in
-                    switch phase {
-                    case .success(let image): frame(image.resizable().aspectRatio(contentMode: .fit), size: nil)
-                    case .failure: caption("Couldn’t load \(url.host ?? "image")", symbol: "exclamationmark.triangle")
-                    default: ProgressView().controlSize(.small).padding(8)
-                    }
-                }
+            if let remote {
+                frame(remote.image).modifier(QuickLookable(group: [.data(remote.data, fileExtension: remote.fileExtension,
+                                                                         title: alt.isEmpty ? url.lastPathComponent : alt)], index: 0))
+            } else if failed {
+                caption("Couldn’t load \(url.host ?? "image")", symbol: "exclamationmark.triangle")
+            } else if load {
+                ProgressView().controlSize(.small).padding(8).task(id: url) { await fetch() }
             } else {
                 Button { load = true } label: {
                     caption("\(alt.isEmpty ? "Image" : alt) · load from \(url.host ?? "web")", symbol: "photo")
@@ -367,8 +382,20 @@ struct MarkdownImage: View {
         }
     }
 
-    private func frame(_ image: some View, size: NSSize?) -> some View {
-        image.frame(maxWidth: min(size?.width ?? 520, 520), maxHeight: 360, alignment: .leading)
+    /// The bytes as well as the picture, so Quick Look can show it without fetching it again.
+    private func fetch() async {
+        guard let (data, response) = try? await URLSession.shared.data(from: url), let image = NSImage(data: data) else { failed = true; return }
+        let type = response.mimeType.flatMap { UTType(mimeType: $0) }
+        remote = (image, data, type?.preferredFilenameExtension ?? (url.pathExtension.isEmpty ? "png" : url.pathExtension))
+    }
+
+    /// The picture at its own shape: as wide as the reply allows, never past its natural width or
+    /// `maxHeight`, with the border hugging it rather than the space beside it.
+    private func frame(_ image: NSImage) -> some View {
+        let ratio = image.size.width / max(image.size.height, 1)
+        return Image(nsImage: image).resizable().aspectRatio(ratio, contentMode: .fit)
+            .frame(maxWidth: min(image.size.width, Self.maxHeight * ratio))
+            .fixedSize(horizontal: false, vertical: true)
             .clipShape(RoundedRectangle(cornerRadius: 10))
             .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.white.opacity(0.12)))
             .accessibilityLabel(alt.isEmpty ? "Image" : alt)

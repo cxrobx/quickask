@@ -398,7 +398,7 @@ struct PopupView: View {
                             }.padding(.leading, 13)
                             }
                             if !message.images.isEmpty {
-                                HStack(spacing: 8) { ForEach(message.images) { thumbnail($0, size: 72) } }
+                                HStack(spacing: 8) { ForEach(message.images) { thumbnail($0, size: 72, in: message.images) } }
                             }
                             let steps = user ? [] : message.activity ?? []
                             if !steps.isEmpty {
@@ -598,7 +598,7 @@ struct PopupView: View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
                 ForEach(model.attachments) { attachment in
-                    thumbnail(attachment, size: 48)
+                    thumbnail(attachment, size: 48, in: model.attachments)
                         .overlay(alignment: .topTrailing) {
                             Button { model.removeAttachment(attachment.id) } label: {
                                 Image(systemName: "xmark").font(appFont(size: 8, weight: .bold)).foregroundStyle(.white)
@@ -611,7 +611,8 @@ struct PopupView: View {
         }.frame(height: PopupMetrics.attachmentStrip)
     }
 
-    private func thumbnail(_ attachment: ImageAttachment, size: CGFloat) -> some View {
+    /// Quick Look steps through the images it came with.
+    private func thumbnail(_ attachment: ImageAttachment, size: CGFloat, in group: [ImageAttachment]) -> some View {
         Group {
             // Fit, not fill: a wide screenshot shows whole rather than cropped to a square.
             if let image = attachment.image { Image(nsImage: image).resizable().aspectRatio(contentMode: .fit) }
@@ -621,6 +622,7 @@ struct PopupView: View {
         .clipShape(RoundedRectangle(cornerRadius: 8))
         .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.white.opacity(0.15)))
         .accessibilityLabel("Attached image, \(attachment.pixelWidth) by \(attachment.pixelHeight)")
+        .modifier(QuickLookable(group: PreviewImage.attachments(group), index: group.firstIndex { $0.id == attachment.id } ?? 0, cornerRadius: 8))
     }
 
     @ViewBuilder private var providerPicker: some View {
@@ -1354,6 +1356,12 @@ final class ComposerTextView: NSTextView {
         if ImageAttachment.available(on: sender.draggingPasteboard),
            onImages?(ImageAttachment.read(from: sender.draggingPasteboard)) == true { return true }
         return super.performDragOperation(sender)
+    }
+    // Back to typing: Space types a space again rather than previewing a selected image.
+    override func becomeFirstResponder() -> Bool {
+        let accepted = super.becomeFirstResponder()
+        if accepted { QuickLook.shared.deselect() }
+        return accepted
     }
     override func keyDown(with event: NSEvent) {
         // Preserve IME composition: Return confirms marked text before sending.

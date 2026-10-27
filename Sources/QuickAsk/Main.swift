@@ -5,7 +5,7 @@ import os
 
 private let activationLog = Logger(subsystem: "local.quickask.desktop", category: "activation")
 
-final class QuickPanel: NSPanel {
+final class QuickPanel: PreviewHostPanel {
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { true }
 }
@@ -90,6 +90,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self, event.window === self.panel else { return event }
+            if QuickLook.shared.handleKey(event, in: self.panel) { return nil }
             // Esc ends voice mode first, then interrupts the answer in the tab showing; the next one hides the popup.
             if event.keyCode == 53 && self.model.voice.isActive { self.model.voice.stop(); return nil }
             if event.keyCode == 53 && self.model.busy { self.model.stop(); return nil }
@@ -224,6 +225,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func hide(restoreFocus: Bool) {
+        QuickLook.shared.close()
         if panel.isVisible { hiddenAt = Date() }
         panel.orderOut(nil)
         model.popupVisible = false
@@ -318,6 +320,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         glassHost?.applyWindowEffect()
     }
     func windowDidResignKey(_ notification: Notification) {
+        // Quick Look taking the key window is still the popup in use.
+        if !model.pinned && !QuickLook.shared.isOpen { hide(restoreFocus: false) }
+    }
+    /// Quick Look held the key window, so the popup never saw the user leave: close both.
+    func applicationDidResignActive(_ notification: Notification) {
+        guard QuickLook.shared.isOpen else { return }
+        QuickLook.shared.close()
         if !model.pinned { hide(restoreFocus: false) }
     }
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply { model.stopAll(); return .terminateNow }

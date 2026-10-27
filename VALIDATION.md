@@ -1,5 +1,24 @@
 # Validation
 
+## Image previews: Quick Look and full-size inline images (October 27, 2026)
+
+- Reply images were capped at 520×360 pt with the border drawn round that box, so a
+  1200×1400 page screenshot showed at 309×360 beside empty space. They now keep their own
+  shape up to the reply's width and 480 pt high, the border hugging the image.
+- Finder's Quick Look (`QLPreviewPanel`, `QuickLook.swift`): a click selects an image
+  (accent ring), Space or a double-click opens it, the arrows step through the reply's
+  images or a message's attachments, Space or Esc closes it. Attachments preview from an
+  owner-only temp folder removed on close. The popup no longer hides when Quick Look
+  takes the key window, and a click on it while the preview is up reaches the image.
+- Driven in a harness window on the real `PopupView` with posted clicks and keys: 24
+  checks, all passed, covering select, Space open and close, level above the floating
+  popup, →/↓ stepping, double-click, the preview following a new selection, Esc,
+  attachment thumbnails, the 0700 temp folder and its removal, and Space still typing in
+  the composer. Quick Look opens on the screen under the pointer.
+- New layout checks (944 provider/transport/layout checks, all passing) pin the sizing and
+  the Space rule; the tall-image check fails on the old frame. MCP protocol test passed.
+  Rebuilt, verified the signature, and relaunched `dist/QuickAsk.app`.
+
 ## Faster computer use: scripts, popups, batches (October 24, 2026)
 
 - Four new desktop tools: `app_dictionary`, `app_script`, `choose_option`, `batch_actions`.

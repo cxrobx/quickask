@@ -370,6 +370,7 @@ struct ProviderTests {
 
     @MainActor static func main() async throws {
         verifyPopupLayout { condition, name in check(condition, name) }
+        verifyImagePreview { condition, name in check(condition, name) }
         try verifyChatRecovery { condition, name in check(condition, name) }
         try verifyStreaming { condition, name in check(condition, name) }
         try await verifyChatHistory { condition, name in check(condition, name) }

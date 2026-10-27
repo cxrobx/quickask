@@ -209,3 +209,42 @@ func verifyPopupLayout(check: (Bool, String) -> Void) {
     check(heartbeat, "Chat layout returns control to the main queue")
     window.contentView = nil
 }
+
+/// Reply images sit at their own shape with the border hugging them, and Space previews only
+/// when an image is selected and nothing is being typed.
+@MainActor
+func verifyImagePreview(check: (Bool, String) -> Void) {
+    let folder = FileManager.default.temporaryDirectory.appendingPathComponent("QuickAsk-image-test-\(UUID().uuidString)")
+    try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: folder) }
+    func fixture(_ name: String, _ width: Int, _ height: Int) -> URL {
+        let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: width, pixelsHigh: height, bitsPerSample: 8, samplesPerPixel: 4,
+                                      hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
+        let url = folder.appendingPathComponent(name)
+        try? bitmap.representation(using: .png, properties: [:])?.write(to: url)
+        return url
+    }
+    func size(_ url: URL, width: CGFloat) -> NSSize {
+        NSHostingController(rootView: MarkdownImage(url: url, alt: "")).sizeThatFits(in: NSSize(width: width, height: 10_000))
+    }
+    func near(_ a: NSSize, _ b: NSSize) -> Bool { abs(a.width - b.width) < 1 && abs(a.height - b.height) < 1 }
+    let tall = size(fixture("tall.png", 1200, 1400), width: 760)
+    check(near(tall, NSSize(width: 480 * 1200 / 1400, height: 480)), "A tall screenshot fills the height cap and its frame hugs it (\(tall))")
+    let wide = size(fixture("wide.png", 1600, 500), width: 700)
+    check(near(wide, NSSize(width: 700, height: 700 * 500 / 1600)), "A wide image takes the reply's full width (\(wide))")
+    let small = size(fixture("small.png", 300, 200), width: 700)
+    check(near(small, NSSize(width: 300, height: 200)), "A small image keeps its own size (\(small))")
+
+    let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 200, height: 100), styleMask: [.titled], backing: .buffered, defer: true)
+    let editor = NSTextView(), prose = NSTextView()
+    prose.isEditable = false
+    func space(_ flags: NSEvent.ModifierFlags = []) -> NSEvent {
+        NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: flags, timestamp: 0, windowNumber: window.windowNumber, context: nil,
+                         characters: " ", charactersIgnoringModifiers: " ", isARepeat: false, keyCode: 49)!
+    }
+    check(QuickLook.spaceToggles(space(), selected: true, firstResponder: window), "Space previews a selected image")
+    check(QuickLook.spaceToggles(space(), selected: true, firstResponder: prose), "Space previews a selected image after selecting reply text")
+    check(!QuickLook.spaceToggles(space(), selected: true, firstResponder: editor), "Space types in the composer even with an image selected")
+    check(!QuickLook.spaceToggles(space(), selected: false, firstResponder: window), "Space does nothing with no image selected")
+    check(!QuickLook.spaceToggles(space(.command), selected: true, firstResponder: window), "⌘Space is left alone")
+}
