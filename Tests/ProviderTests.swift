@@ -509,6 +509,8 @@ struct ProviderTests {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("QuickAsk-tests-\(UUID())")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
+        // Herdr launches save Claude Code trust; never into the real ~/.claude.json.
+        ClaudeTrust.configFile = directory.appendingPathComponent("claude-trust.json")
         let fixture = directory.appendingPathComponent("fake-cli")
         try """
         #!/bin/sh
@@ -1414,6 +1416,45 @@ struct ProviderTests {
         let failing = HerdrProposal.make(question: "Continue in Herdr", history: conversation, attachments: [], snapshot: nil, provider: .claude)
         let failedHandoff = try HerdrHandoff.launch(failing, executable: fakeCLI.path, model: "", router: failedRouter.path, root: sessionRoot)
         check(!failedHandoff.confirmed && failedHandoff.message.contains("did not confirm"), "An unconfirmed direct launch does not claim a session opened")
+        // 2026-10-27: ~/Projects was trusted, but Claude Code's trust stops at each git repository, so a handoff to a repo
+        // never opened before asked "Do you trust this folder?". The launch saves it first, the way accepting the prompt does.
+        let trustRoot = directory.appendingPathComponent("trust-root"), strayRepo = directory.appendingPathComponent("downloads/stray-repo")
+        let newRepo = trustRoot.appendingPathComponent("new-repo"), plainFolder = trustRoot.appendingPathComponent("plain")
+        for folder in [newRepo.appendingPathComponent(".git"), newRepo.appendingPathComponent("src"), strayRepo.appendingPathComponent(".git"), plainFolder] {
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        }
+        func real(_ url: URL) -> String { url.resolvingSymlinksInPath().standardizedFileURL.path }
+        let trustConfig = ClaudeTrust.configFile
+        try JSONSerialization.data(withJSONObject: ["numStartups": 7, "oauthAccount": ["emailAddress": "fixture@example.com"],
+                                                    "projects": [real(trustRoot): ["hasTrustDialogAccepted": true, "allowedTools": ["Bash"]]]]).write(to: trustConfig)
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: trustConfig.path)
+        func savedConfig(_ url: URL) -> [String: Any] { (try? JSONSerialization.jsonObject(with: Data(contentsOf: url))) as? [String: Any] ?? [:] }
+        func savedProject(_ path: String, in config: [String: Any]) -> [String: Any]? { (config["projects"] as? [String: Any])?[path] as? [String: Any] }
+        check(ClaudeTrust.extend(to: plainFolder) == nil && ClaudeTrust.extend(to: strayRepo) == nil && savedProject(real(strayRepo), in: savedConfig(trustConfig)) == nil,
+              "A plain folder under a trusted one is already trusted, and a repository with nothing trusted above it still asks")
+        mkdir(trustConfig.path + ".lock", 0o755)
+        check(ClaudeTrust.extend(to: newRepo) == nil && savedProject(real(newRepo), in: savedConfig(trustConfig)) == nil, "While Claude Code holds its config lock, nothing is written")
+        rmdir(trustConfig.path + ".lock")
+        let trustRouter = directory.appendingPathComponent("fixture-trust-router"), seenAtLaunch = directory.appendingPathComponent("claude-at-launch.json")
+        try """
+        #!/usr/bin/python3
+        import json,shutil
+        shutil.copy('\(trustConfig.path)', '\(seenAtLaunch.path)')
+        print(json.dumps({'workspace_id':'fixture-space','tab_id':'fixture-tab'}))
+        """.write(to: trustRouter, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: trustRouter.path)
+        var inRepo = HerdrProposal.make(question: "Continue in Herdr", history: conversation, attachments: [], snapshot: nil, provider: .claude)
+        inRepo.workspace = newRepo.appendingPathComponent("src").path
+        let repoHandoff = try HerdrHandoff.launch(inRepo, executable: fakeCLI.path, model: "", router: trustRouter.path, root: sessionRoot)
+        let trustedRepo = savedProject(real(newRepo), in: savedConfig(seenAtLaunch))
+        check(repoHandoff.confirmed && trustedRepo?["hasTrustDialogAccepted"] as? Bool == true && (trustedRepo?["allowedTools"] as? [String])?.isEmpty == true,
+              "A Claude handoff into a never-opened repository under a trusted folder is trusted before the session starts")
+        let afterLaunch = savedConfig(trustConfig), configMode = try FileManager.default.attributesOfItem(atPath: trustConfig.path)[.posixPermissions] as? NSNumber
+        check(afterLaunch["numStartups"] as? Int == 7 && (afterLaunch["oauthAccount"] as? [String: Any])?["emailAddress"] as? String == "fixture@example.com"
+              && savedProject(real(trustRoot), in: afterLaunch)?["allowedTools"] as? [String] == ["Bash"] && configMode?.intValue == 0o600
+              && !FileManager.default.fileExists(atPath: trustConfig.path + ".lock"), "The rest of Claude Code's config, its permissions and its lock are left as they were")
+        let settled = try Data(contentsOf: trustConfig), extendedAgain = ClaudeTrust.extend(to: newRepo.appendingPathComponent("src")), rewritten = try Data(contentsOf: trustConfig)
+        check(extendedAgain == nil && rewritten == settled, "An already trusted repository is not written again")
         let transferModel = AppModel(preferences: UserDefaults(suiteName: "QuickAsk-test-\(UUID().uuidString)")!)
         transferModel.selectContext(.general); transferModel.messages = conversation
         check(transferModel.canTransferToHerdr && !transferModel.canSend, "The menu can transfer an existing chat without requiring a new draft")

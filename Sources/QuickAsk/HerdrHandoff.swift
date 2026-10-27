@@ -236,6 +236,7 @@ enum HerdrHandoff {
     static var helperPath: String { FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".local/bin/cx-open-in-herdr").path }
     /// Where a handoff with no single repo starts. Claude Code never saves trust for the home folder, so a session
     /// opened there (or in a fresh private folder) asks every time; ~/Projects is trusted once and stays trusted.
+    /// That trust stops at each git repository inside it, which `ClaudeTrust` carries across before a session opens.
     static var generalFolder: URL { FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Projects", isDirectory: true) }
     static var sessionsDirectory: URL { FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/QuickAsk/Sessions", isDirectory: true) }
 
@@ -397,6 +398,7 @@ enum HerdrHandoff {
         launchLock.lock(); defer { launchLock.unlock() }
         guard FileManager.default.isExecutableFile(atPath: router) else { throw DelegationError("The cx-open-in-herdr helper is unavailable. Install the shared Herdr integration first.") }
         let prepared = try prepare(proposal, executable: executable, model: model, root: root, general: general)
+        if proposal.provider == .claude { ClaudeTrust.extend(to: prepared.workingDirectory) }
         let attempt = prepared.directory.appendingPathComponent("attempt.json")
         let fd = open(attempt.path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0o600)
         if fd < 0 {
@@ -437,5 +439,70 @@ enum HerdrHandoff {
         let data = try JSONSerialization.data(withJSONObject: ["signature": prepared.signature, "state": result.confirmed ? "opened" : "unconfirmed", "result": resultValue])
         try data.write(to: attempt, options: [.atomic]); try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: attempt.path)
         return result
+    }
+}
+
+/// Claude Code's "Do you trust the files in this folder?" prompt, which a Herdr session would otherwise open behind.
+/// Its rule (2.1.312): a folder is trusted when it or a folder above it holds `hasTrustDialogAccepted` in ~/.claude.json,
+/// but inside a git repository the search stops at the repository root, and trust is saved for that root.
+/// 2026-10-27: ~/Projects was trusted, ~/Projects/cxbot had never been opened, and its handoff asked.
+enum ClaudeTrust {
+    /// Tests point this at a fixture.
+    static var configFile = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude.json")
+    /// What Claude Code writes for a project it has no entry for when the prompt is accepted.
+    private static let newProject: [String: Any] = ["allowedTools": [String](), "mcpContextUris": [String](), "mcpServers": [String: Any](), "enabledMcpjsonServers": [String](), "disabledMcpjsonServers": [String](),
+                                                    "hasClaudeMdExternalIncludesApproved": false, "hasClaudeMdExternalIncludesWarningShown": false]
+
+    /// The nearest folder at or above `path` holding `.git`.
+    static func repositoryRoot(_ path: String) -> String? {
+        var folder = path
+        while true {
+            if FileManager.default.fileExists(atPath: (folder as NSString).appendingPathComponent(".git")) { return folder }
+            let parent = (folder as NSString).deletingLastPathComponent
+            if parent == folder { return nil }
+            folder = parent
+        }
+    }
+    /// The first trusted folder from `path` upward, giving up after `limit`.
+    private static func trustedFolder(from path: String, projects: [String: Any], through limit: String?) -> String? {
+        var folder = path
+        while true {
+            if (projects[folder] as? [String: Any])?["hasTrustDialogAccepted"] as? Bool == true { return folder }
+            let parent = (folder as NSString).deletingLastPathComponent
+            if folder == limit || parent == folder { return nil }
+            folder = parent
+        }
+    }
+    /// Saves trust for the repository `folder` is in, as accepting the prompt there would, when Claude Code would ask only
+    /// because the trust you gave a folder above it stops at the repository. A repository with nothing trusted above it
+    /// still asks. Writes under Claude Code's own lock (`.claude.json.lock`); busy or unreadable, it skips and the prompt shows.
+    /// Returns the repository it trusted.
+    @discardableResult
+    static func extend(to folder: URL, config: URL = configFile) -> String? {
+        let path = folder.resolvingSymlinksInPath().standardizedFileURL.path
+        guard let root = repositoryRoot(path), root != FileManager.default.homeDirectoryForCurrentUser.resolvingSymlinksInPath().standardizedFileURL.path else { return nil }
+        let lock = config.path + ".lock"
+        var locked = false
+        for _ in 0..<40 {
+            if mkdir(lock, 0o755) == 0 { locked = true; break }
+            guard errno == EEXIST else { return nil }
+            usleep(50_000)
+        }
+        guard locked else { return nil }
+        defer { rmdir(lock) }
+        let file = config.resolvingSymlinksInPath()
+        guard let data = try? Data(contentsOf: file), var settings = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        var projects = settings["projects"] as? [String: Any] ?? [:]
+        guard trustedFolder(from: path, projects: projects, through: root) == nil,
+              trustedFolder(from: (root as NSString).deletingLastPathComponent, projects: projects, through: nil) != nil else { return nil }
+        var entry = projects[root] as? [String: Any] ?? newProject
+        entry["hasTrustDialogAccepted"] = true
+        projects[root] = entry
+        settings["projects"] = projects
+        let mode = (try? FileManager.default.attributesOfItem(atPath: file.path)[.posixPermissions] as? NSNumber) ?? 0o600
+        guard let updated = try? JSONSerialization.data(withJSONObject: settings, options: [.prettyPrinted, .withoutEscapingSlashes]),
+              (try? updated.write(to: file, options: [.atomic])) != nil else { return nil }
+        try? FileManager.default.setAttributes([.posixPermissions: mode], ofItemAtPath: file.path)
+        return root
     }
 }
