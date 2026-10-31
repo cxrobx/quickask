@@ -173,7 +173,8 @@ full Markdown tables and fenced code highlighting are not yet implemented.
    button to stop the request.
 
 The same local MCP server gives both providers twenty tools: `inspect_ui` (the
-accessibility tree, with element IDs that stay stable while the element exists),
+accessibility tree, with element IDs that stay stable while the element exists;
+for a dense app, `depth` maps it and `element_id` reads one region),
 `take_screenshot` (one app window, with numbered marks matching those IDs),
 `click_element`, `click_coordinates`, `drag_coordinates`, `hover`, `set_value`,
 `choose_option` (a popup or dropdown item by title), `type_text`, `press_key`,
@@ -214,7 +215,9 @@ The helper uses a request-scoped revocable lease, a ten-minute deadline, and a
 action (an action's own report counts), rejects vanished elements and
 out-of-window coordinates, detects app restarts, pauses when you start typing or
 clicking in the controlled app yourself, and refuses to type into or set secure
-password fields. Stopping removes the control lease before terminating the CLI.
+password fields. Key chords and menu commands that quit the app or end the session
+(Quit, log out, force quit, lock, Empty Trash) need `confirmed: true`, on the same
+terms as `app_script`. Stopping removes the control lease before terminating the CLI.
 There is no network listening port.
 
 ### Manuals and memory per app

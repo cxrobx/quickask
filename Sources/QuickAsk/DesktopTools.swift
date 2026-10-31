@@ -35,6 +35,9 @@ final class DesktopMCPServer {
     /// How old the last observation may be when an action arrives.
     static let observationLimit: TimeInterval = 60
     static let batchLimit = 8
+    /// Elements in one tree. More than this and inspect_ui points at depth and element_id.
+    static let treeLimit = 400
+    static let maxTreeDepth = 8
     /// Actions on known elements. Coordinates need a screenshot between steps, and wait would
     /// stretch a batch past a CLI's tool timeout.
     static let batchable: Set<String> = ["click_element", "set_value", "choose_option", "type_text", "press_key", "select_menu", "scroll"]
@@ -79,6 +82,10 @@ final class DesktopMCPServer {
     private var indexState: (done: Bool, error: String?) = (true, nil)
     /// Whether the last action's report showed a change, for recording what worked.
     private var lastChanged = false
+    /// What inspect_ui is watching: one element's subtree and/or a limited number of levels.
+    /// Nil for the whole app. Action reports re-read the same view.
+    private var treeRoot: AXUIElement?
+    private var treeDepth: Int?
 
     init(targetPID: Int32, ownerPID: Int32, lease: String, gatewayConfiguration: GatewayConfiguration? = nil) {
         self.targetPID = targetPID; self.ownerPID = ownerPID; self.lease = lease
@@ -103,7 +110,9 @@ final class DesktopMCPServer {
     When you already know the next few steps (fill a dialog's fields, then confirm it), send them in
     one batch_actions call. Every action returns what changed (and a fresh screenshot after pixel
     actions), so inspect again only when you need the whole tree, and take a screenshot only to judge
-    a visual result such as a crop or an edge. Element IDs stay valid while the element exists. In web
+    a visual result such as a crop or an edge. Element IDs stay valid while the element exists. When
+    the tree is truncated, inspect_ui with depth maps the app; then pass element_id to read one region
+    before you fall back to screenshots. In web
     pages, click a field and use type_text so the page sees real input. If an action has no effect,
     retry it once with foreground: true, which briefly brings the app forward. When you don't know
     where a feature lives, call search_manual (if the app has a manual) before exploring menus.
@@ -129,9 +138,12 @@ final class DesktopMCPServer {
         let foreground: [String: Any] = ["type": "boolean", "description": "Bring the app forward for this action. Only after a background attempt had no effect."]
         let button: [String: Any] = ["type": "string", "enum": ["left", "right"]]
         let count: [String: Any] = ["type": "integer", "enum": [1, 2], "description": "2 for a double click."]
+        let confirmed: [String: Any] = ["type": "boolean", "description": "Only when the user has explicitly approved, in this conversation, quitting the app or ending the session. Never on your own judgment."]
         return [
-            tool("inspect_ui", "Read the app's accessibility tree: element IDs, roles, labels, values, states and screen bounds, plus its window IDs.",
-                 ["foreground": ["type": "boolean", "description": "Only when the result says page content is missing: briefly shows the app so it builds it."]], readOnly: true),
+            tool("inspect_ui", "Read the app's accessibility tree: element IDs, roles, labels, values, states and screen bounds, plus its window IDs. For a dense app, map it with depth, then read one region with element_id. With neither, it reads the whole app.",
+                 ["foreground": ["type": "boolean", "description": "Only when the result says page content is missing: briefly shows the app so it builds it."],
+                  "depth": ["type": "integer", "description": "Levels to list, 1-\(Self.maxTreeDepth). Branches cut here show how many children they hide."],
+                  "element_id": ["type": "integer", "description": "Read only this element and what is inside it. Later action reports watch the same region."]], readOnly: true),
             tool("take_screenshot", "Capture one app window. Numbered marks match element IDs; coordinate tools take this image's pixels. Requires Screen Recording.",
                  ["window_id": integer, "marks": ["type": "boolean", "description": "Draw element marks (default true)."]], readOnly: true),
             tool("click_element", "Click an element by ID: presses it through Accessibility when it can, otherwise clicks its center. Right opens its context menu.",
@@ -148,13 +160,13 @@ final class DesktopMCPServer {
                  ["element_id": integer, "option": str, "foreground": foreground], ["element_id", "option"]),
             tool("type_text", "Type Unicode text. With element_id, focuses that field first; otherwise types into the focused control. \\n presses Return.",
                  ["text": str, "element_id": integer, "foreground": foreground], ["text"]),
-            tool("press_key", "Press a key or chord, e.g. Return, Tab, Escape, command+a, command+s, shift+Tab, Left, F5.",
-                 ["key": str, "foreground": foreground], ["key"]),
+            tool("press_key", "Press a key or chord, e.g. Return, Tab, Escape, command+a, command+s, shift+Tab, Left, F5. Chords that quit the app or end the session are refused without confirmed.",
+                 ["key": str, "foreground": foreground, "confirmed": confirmed], ["key"]),
             tool("scroll", "Scroll at an element, a screenshot point, or the focused window's center. In the foreground it scrolls like a mouse wheel; iPhone Mirroring always scrolls that way.",
                  ["direction": ["type": "string", "enum": ["up", "down", "left", "right"]], "amount": ["type": "integer", "description": "Pixels, 1-1200 (default 400)."],
                   "element_id": integer, "x": number, "y": number, "foreground": foreground], ["direction"]),
-            tool("select_menu", "Choose a menu-bar command by its path, e.g. [\"File\", \"Export…\"]. Works in the background. A partial or empty path lists that menu's items.",
-                 ["path": ["type": "array", "items": str]], ["path"]),
+            tool("select_menu", "Choose a menu-bar command by its path, e.g. [\"File\", \"Export…\"]. Works in the background. A partial or empty path lists that menu's items. Commands that quit the app or end the session are refused without confirmed.",
+                 ["path": ["type": "array", "items": str], "confirmed": confirmed], ["path"]),
             tool("batch_actions", "Run up to \(Self.batchLimit) element actions in order and report what changed once, at the end. For steps you already know, e.g. set two fields, choose an option, press Return. Stops at the first step that fails or changes nothing.",
                  ["steps": ["type": "array", "maxItems": Self.batchLimit, "items": ["type": "object", "additionalProperties": false, "required": ["tool", "arguments"], "properties": [
                     "tool": ["type": "string", "enum": Self.batchable.sorted()], "arguments": ["type": "object", "description": "That tool's arguments."]]]]], ["steps"]),
@@ -377,6 +389,8 @@ final class DesktopMCPServer {
                 try inForeground { usleep(300_000); waitForWebArea(seconds: 4) }
             }
             visual = false; capture = nil
+            treeRoot = args["element_id"] != nil ? try element(args) : nil
+            treeDepth = (args["depth"] as? Int).map { min(Self.maxTreeDepth, max(1, $0)) }
             let tree = refreshTree().tree
             return text(tree)
 
@@ -528,6 +542,7 @@ final class DesktopMCPServer {
         case "press_key":
             guard let chord = args["key"] as? String else { throw ProviderRunError(message: "Missing key.") }
             let (code, flags) = try Self.parseKey(chord)
+            if args["confirmed"] as? Bool != true, Self.endsSession(code: code, flags: flags) { throw Self.needsConfirmation(chord) }
             try prepareAction()
             let window = focusedWindowID() ?? 0
             let route = try deliver(foreground: foreground) {
@@ -588,6 +603,9 @@ final class DesktopMCPServer {
                 if index == path.count - 1 {
                     if let submenu { return text("Items in \(path.joined(separator: " › ")): \(Self.listing(children(submenu)))") }
                     guard attribute(item, kAXEnabledAttribute) as? Bool != false else { throw ProviderRunError(message: "“\(name)” is disabled right now.") }
+                    // The menu route to the same command must not get past the press_key check.
+                    if args["confirmed"] as? Bool != true, let chord = Self.shortcut(item), let (code, flags) = try? Self.parseKey(chord),
+                       Self.endsSession(code: code, flags: flags) { throw Self.needsConfirmation(title(item)) }
                     try prepareAction()
                     AXUIElementSetMessagingTimeout(item, 3)
                     let pressed = AXUIElementPerformAction(item, kAXPressAction as CFString)
@@ -855,6 +873,9 @@ final class DesktopMCPServer {
         guard isChromium(pid: pid) else { return }
         let app = AXUIElementCreateApplication(pid)
         // Electron's switch; Chrome ignores it and builds on the first request anyway.
+        // Measured on Electron 2026-10-31: the tree reads within 20 ms, but for about 2.3 s after the
+        // first request a press sent to it returns success and is lost. No attribute shows when that
+        // ends. click_element doesn't wait: a press that early took its pixel fallback and landed.
         AXUIElementSetAttributeValue(app, "AXManualAccessibility" as CFString, kCFBooleanTrue)
         _ = hasWebArea(pid: pid)
     }
@@ -908,20 +929,33 @@ final class DesktopMCPServer {
         for (id, element) in elements { known[CFHash(element), default: []].append((id, element)) }
         let previous = rendered
         var walk = TreeWalk(known: known, nextID: nextID)
+        walk.levels = treeDepth
         inspectionDeadline = Date().addingTimeInterval(7)
         let root = AXUIElementCreateApplication(targetPID)
         AXUIElementSetMessagingTimeout(root, 1)
-        // Windows, sheets and open menus; the menu bar has its own tool.
-        for child in children(root) where attribute(child, kAXRoleAttribute) as? String != kAXMenuBarRole {
-            visit(child, depth: 0, indent: 0, into: &walk)
+        // The region closed: go back to watching the whole app rather than an empty one.
+        if let region = treeRoot, attribute(region, kAXRoleAttribute) == nil { treeRoot = nil }
+        if let region = treeRoot {
+            visit(region, depth: 0, indent: 0, into: &walk)
+        } else {
+            // Windows, sheets and open menus; the menu bar has its own tool.
+            for child in children(root) where attribute(child, kAXRoleAttribute) as? String != kAXMenuBarRole {
+                visit(child, depth: 0, indent: 0, into: &walk)
+            }
         }
-        elements = walk.elements; rendered = walk.rendered; order = walk.order; nextID = walk.nextID
+        // A narrowed view keeps the IDs already handed out: the model still holds the map's.
+        elements = partialTree ? walk.elements.merging(elements) { current, _ in current } : walk.elements
+        rendered = walk.rendered; order = walk.order; nextID = walk.nextID
         observedAt = Date()
         var header = ["App: \(NSRunningApplication(processIdentifier: targetPID)?.localizedName ?? "App")", "Windows: \(windowInfos())"]
         if knowledge != nil, scriptBundle != nil { header.append("Scriptable: yes. app_dictionary and app_script can do whole jobs in one call.") }
         if let focused = attribute(root, kAXFocusedUIElementAttribute), let id = walk.id(of: focused as! AXUIElement) { header.append("Focused: [\(id)]") }
-        if walk.truncated { header.append("(Tree truncated; use take_screenshot or scroll for the rest.)") }
-        if webApp, !walk.lines.contains(where: { $0.contains("AXWebArea") }) {
+        if treeRoot != nil { header.append("Showing only one region. inspect_ui with no arguments reads the whole app.") }
+        if walk.truncated {
+            header.append(partialTree ? "(Tree truncated; narrow to a smaller region with element_id, or use take_screenshot.)"
+                                      : "(Tree truncated at \(Self.treeLimit) elements. inspect_ui with depth: 2 maps the app; then element_id reads one region.)")
+        }
+        if webApp, !partialTree, !walk.lines.contains(where: { $0.contains("AXWebArea") }) {
             header.append("(Page content isn't in the tree: this app builds it only while its window is visible. Call inspect_ui with foreground: true once; it stays available afterwards.)")
         }
         let tree = (header + walk.lines).joined(separator: "\n")
@@ -930,13 +964,19 @@ final class DesktopMCPServer {
         return (tree, changes(since: previous))
     }
 
+    private var partialTree: Bool { treeRoot != nil || treeDepth != nil }
+
     /// New and changed lines since an earlier tree, and what disappeared from it.
     private func changes(since previous: [Int: String]) -> String {
         let added = order.filter { previous[$0] == nil }.map { "+ [\($0)] \(rendered[$0]!)" }
         let changed = order.filter { previous[$0] != nil && previous[$0] != rendered[$0] }.map { "~ [\($0)] \(rendered[$0]!)" }
         let removed = previous.keys.filter { rendered[$0] == nil }.sorted()
         let lines = added + changed
-        if lines.count + removed.count == 0 { return "No accessibility changes. If you expected one, take a screenshot or retry with foreground: true." }
+        if lines.count + removed.count == 0 {
+            // A dialog can open outside the region; "nothing changed" must not read as "try again".
+            if partialTree { return "No changes in the part being watched. Before retrying, inspect_ui with no arguments to read the whole app." }
+            return "No accessibility changes. If you expected one, take a screenshot or retry with foreground: true."
+        }
         if lines.count > 60 { return "Many changes; the current tree:\n\(lastTree)" }
         var summary = lines
         if !removed.isEmpty { summary.append("- gone: " + removed.prefix(20).map { "[\($0)] \(previous[$0]!.prefix(60))" }.joined(separator: "; ") + (removed.count > 20 ? " …and \(removed.count - 20) more" : "")) }
@@ -952,6 +992,8 @@ final class DesktopMCPServer {
         var lines: [String] = []
         var characters = 0
         var truncated = false
+        /// Listed levels to walk; nil for all of them.
+        var levels: Int?
         init(known: [CFHashCode: [(Int, AXUIElement)]], nextID: Int) { self.known = known; self.nextID = nextID }
         mutating func assign(_ element: AXUIElement) -> Int {
             if let match = known[CFHash(element)]?.first(where: { elements[$0.0] == nil && CFEqual($0.1, element) }) { elements[match.0] = element; return match.0 }
@@ -967,7 +1009,7 @@ final class DesktopMCPServer {
 
     private func visit(_ element: AXUIElement, depth: Int, indent: Int, into walk: inout TreeWalk) {
         guard depth <= 16 else { return }
-        guard walk.order.count < 400, walk.characters < 30000, Date() < inspectionDeadline else { walk.truncated = true; return }
+        guard walk.order.count < Self.treeLimit, walk.characters < 30000, Date() < inspectionDeadline else { walk.truncated = true; return }
         // Long enough for Chromium to build a subtree on first request; the walk's deadline bounds the total.
         AXUIElementSetMessagingTimeout(element, 0.5)
         let role = attribute(element, kAXRoleAttribute) as? String ?? "AXUnknown"
@@ -988,7 +1030,14 @@ final class DesktopMCPServer {
             parts.append("bounds=\(Int(rect.minX)),\(Int(rect.minY)),\(Int(rect.width)),\(Int(rect.height))")
         }
         var childIndent = indent
-        if hasText || !Self.structural.contains(role) {
+        let kids = children(element)
+        // A map has to name unlabelled groups, or there is nothing to drill into. One-child
+        // wrappers stay out: levels count what's listed, and those would use them up.
+        let listed = hasText || !Self.structural.contains(role) || walk.levels != nil && kids.count > 1
+        let cut = listed && walk.levels.map { indent + 1 >= $0 } == true
+        let inside = cut ? kids.count : 0
+        if listed {
+            if inside > 0 { parts.append("\(inside) \(inside == 1 ? "child" : "children") hidden") }
             let id = walk.assign(element)
             let line = parts.joined(separator: " · ")
             walk.rendered[id] = line; walk.order.append(id)
@@ -996,7 +1045,8 @@ final class DesktopMCPServer {
             walk.lines.append(indented); walk.characters += indented.count + 1
             childIndent += 1
         }
-        for child in children(element) { visit(child, depth: depth + 1, indent: childIndent, into: &walk) }
+        if cut { return }
+        for child in kids { visit(child, depth: depth + 1, indent: childIndent, into: &walk) }
     }
 
     private func attribute(_ element: AXUIElement, _ name: String) -> CFTypeRef? {
@@ -1181,6 +1231,18 @@ final class DesktopMCPServer {
     }
 
     // MARK: Keys
+
+    /// Quit, log out, force quit, lock, and Finder's Empty Trash. Extra modifiers still match:
+    /// one added to these usually gives a harsher variant (command+option+shift+q logs out at once).
+    static func endsSession(code: CGKeyCode, flags: CGEventFlags) -> Bool {
+        let q: CGKeyCode = 12, escape: CGKeyCode = 53, delete: CGKeyCode = 51
+        let chords: [(CGKeyCode, CGEventFlags)] = [(q, .maskCommand), (escape, [.maskCommand, .maskAlternate]), (delete, [.maskCommand, .maskShift])]
+        return chords.contains { $0.0 == code && flags.contains($0.1) }
+    }
+
+    static func needsConfirmation(_ name: String) -> ProviderRunError {
+        ProviderRunError(message: "“\(name)” quits the app or ends the session. Ask the user to approve it, then run it again with confirmed: true.")
+    }
 
     static func parseKey(_ chord: String) throws -> (CGKeyCode, CGEventFlags) {
         let pieces = chord.lowercased().split(separator: "+").map(String.init)

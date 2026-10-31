@@ -503,6 +503,15 @@ struct ProviderTests {
         check(key.0 == 1 && key.1.contains(.maskCommand) && key.1.contains(.maskShift), "Key chord parsing")
         do { _ = try DesktopMCPServer.parseKey("unknown+Return"); check(false, "Invalid modifiers rejected") }
         catch { check(true, "Invalid modifiers rejected") }
+        func endsSession(_ chord: String) throws -> Bool { let (code, flags) = try DesktopMCPServer.parseKey(chord); return DesktopMCPServer.endsSession(code: code, flags: flags) }
+        for chord in ["command+q", "cmd+shift+q", "shift+command+q", "control+command+q", "command+option+shift+q", "command+option+escape", "cmd+alt+esc", "command+shift+delete"] {
+            let needs = try endsSession(chord)
+            check(needs, "Needs the go-ahead: \(chord)")
+        }
+        for chord in ["q", "shift+q", "command+s", "command+w", "escape", "command+escape", "command+delete", "option+q"] {
+            let needs = try endsSession(chord)
+            check(!needs, "Plain shortcut: \(chord)")
+        }
         let controlPrompt = try PromptBuilder.make(messages: history, target: target)
         check(controlPrompt.contains("Fixture App") && !controlPrompt.contains("do not inspect"), "Control prompt enables scoped tools")
 

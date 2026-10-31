@@ -151,6 +151,16 @@ struct DesktopControlE2E {
         check(!foreground.error && state().contains("p=1 ") && foreground.text.contains("foreground"), "foreground: true clicks with the app brought forward", "state \(state()), \(foreground.text)")
         check(NSWorkspace.shared.frontmostApplication?.processIdentifier == user.processIdentifier, "…and gives the front back to the user's app")
 
+        // Commands that quit or end the session need the user's go-ahead, by either route.
+        let refusedChord = session.call("press_key", ["key": "command+option+q"])
+        check(refusedChord.error && refusedChord.text.contains("confirmed: true") && state().contains("q=0 "), "press_key refuses a quit chord", "state \(state()), \(refusedChord.text)")
+        let refusedMenu = session.call("select_menu", ["path": ["Fixture", "Quit Softly"]])
+        check(refusedMenu.error && refusedMenu.text.contains("confirmed: true") && state().contains("q=0 "), "select_menu refuses a command with a quit shortcut", "state \(state()), \(refusedMenu.text)")
+        expect("A confirmed quit chord goes through", session.call("press_key", ["key": "command+option+q", "confirmed": true]), "q=1 ")
+        expect("A confirmed quit command goes through", session.call("select_menu", ["path": ["Fixture", "Quit Softly"], "confirmed": true]), "q=2 ")
+
+        try driveLongList(session)
+
         if let chrome = option("--chrome").flatMap(Int32.init) { try driveChrome(executable: executable, pid: chrome, user: user) }
 
         // A later request: the memory and manual are still there.
@@ -168,6 +178,37 @@ struct DesktopControlE2E {
     }
 
     /// The Chromium route: AX presses, focused typing with authenticated keys, and pixel clicks.
+    /// A window too big for one tree: map it, read the part the full tree can't reach, act there.
+    static func driveLongList(_ session: Session) throws {
+        func id(_ text: String, _ label: String) -> Int? {
+            text.range(of: "\\[\\d+\\] [^\\n]*“\(label)”", options: .regularExpression).flatMap { Int(text[$0].dropFirst().prefix { $0.isNumber }) }
+        }
+        _ = session.call("select_menu", ["path": ["Fixture", "Open Long List"]])
+        let full = session.call("inspect_ui")
+        check(full.text.contains("Tree truncated at 400") && !full.text.contains("“C-200”"), "A dense app's tree truncates and points at the map", String(full.text.prefix(300)))
+
+        let map = session.call("inspect_ui", ["depth": 2])
+        let groups = map.text.components(separatedBy: "\n").filter { $0.contains("AXGroup") && $0.contains("children hidden") }
+        check(!map.error && groups.count == 3 && !map.text.contains("“A-1”"), "depth maps the app and says what it hides", String(map.text.prefix(1500)))
+        check(!map.text.contains("Tree truncated"), "…and the map fits", String(map.text.prefix(300)))
+        guard let section = groups.last?.range(of: "\\[\\d+\\]", options: .regularExpression).flatMap({ Int(groups.last![$0].dropFirst().dropLast()) }) else { check(false, "Find the region in the map", map.text); return }
+
+        let region = session.call("inspect_ui", ["element_id": section])
+        check(!region.error && region.text.contains("“C-200”") && !region.text.contains("“A-1”") && region.text.contains("Showing only one region"), "element_id reads one region", String(region.text.prefix(600)))
+        guard let box = id(region.text, "C-200") else { check(false, "Find a checkbox past the full tree's limit", region.text); return }
+
+        let pressed = session.call("click_element", ["element_id": box])
+        check(!pressed.error && pressed.text.contains("[\(box)]") && pressed.text.contains("value=1"), "An action past the limit reports its change", String(pressed.text.prefix(400)))
+        session.assertUntouched("Long list click_element")
+        let idle = session.call("wait", ["seconds": 0.3])
+        check(!idle.error && idle.text.contains("No changes in the part being watched"), "A narrowed view says it can't see the rest", idle.text)
+        let fromMap = session.call("inspect_ui", ["element_id": section])
+        check(!fromMap.error && id(fromMap.text, "C-200") == box, "IDs from the map and the region keep working", String(fromMap.text.prefix(300)))
+
+        let whole = session.call("inspect_ui")
+        check(whole.text.contains("Tree truncated at 400") && !whole.text.contains("Showing only"), "No arguments go back to the whole app", String(whole.text.prefix(300)))
+    }
+
     static func driveChrome(executable: String, pid: Int32, user: NSRunningApplication) throws {
         let session = try Session(executable: executable, target: pid, user: user)
         defer { session.stop() }

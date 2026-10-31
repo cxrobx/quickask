@@ -26,7 +26,8 @@ final class Canvas: NSView {
 
 final class FixtureDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
     var window: NSWindow!
-    var presses = 0, canvasClicks = 0, doubleClicks = 0, rightClicks = 0, resets = 0
+    var presses = 0, canvasClicks = 0, doubleClicks = 0, rightClicks = 0, resets = 0, quits = 0
+    var longList: NSWindow?
     let field = NSTextField(string: "")
     let slider = NSSlider(value: 0, minValue: 0, maxValue: 100, target: nil, action: nil)
     let format = NSPopUpButton(frame: .zero, pullsDown: false)
@@ -37,6 +38,10 @@ final class FixtureDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegat
         let fixtureItem = NSMenuItem(title: "Fixture", action: nil, keyEquivalent: "")
         fixtureItem.submenu = NSMenu(title: "Fixture")
         fixtureItem.submenu?.addItem(withTitle: "Reset Counters", action: #selector(reset), keyEquivalent: "r").target = self
+        // A stand-in for Quit: its shortcut is refused like Quit's, but running it only counts.
+        let quit = fixtureItem.submenu?.addItem(withTitle: "Quit Softly", action: #selector(softQuit), keyEquivalent: "q")
+        quit?.target = self; quit?.keyEquivalentModifierMask = [.command, .option]
+        fixtureItem.submenu?.addItem(withTitle: "Open Long List", action: #selector(openLongList), keyEquivalent: "l").target = self
         menu.addItem(appItem); menu.addItem(fixtureItem)
         NSApp.mainMenu = menu
 
@@ -70,10 +75,31 @@ final class FixtureDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegat
     func controlTextDidChange(_ obj: Notification) { publish() }
     @objc func increment() { presses += 1; publish() }
     @objc func changed() { publish() }
+    @objc func softQuit() { quits += 1; publish() }
+
+    /// Three unlabelled groups of 200 checkboxes: too much for one tree, and the last is out of reach.
+    @objc func openLongList() {
+        let list = NSWindow(contentRect: NSRect(x: 660, y: 200, width: 360, height: 300), styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        list.title = "Long list"
+        list.isReleasedWhenClosed = false
+        for (column, name) in ["A", "B", "C"].enumerated() {
+            let box = NSBox(frame: NSRect(x: 10 + column * 115, y: 10, width: 110, height: 280))
+            box.title = "Section \(name)"
+            for row in 1...200 {
+                let check = NSButton(checkboxWithTitle: "\(name)-\(row)", target: nil, action: nil)
+                check.frame = NSRect(x: 4, y: 240 - row, width: 90, height: 18)
+                box.contentView?.addSubview(check)
+            }
+            list.contentView?.addSubview(box)
+        }
+        list.orderFront(nil)
+        longList = list
+    }
+
     @objc func reset() { presses = 0; canvasClicks = 0; doubleClicks = 0; rightClicks = 0; resets += 1; publish() }
 
-    /// `p=presses c=canvas d=double r=right s=slider x=resets f=format t=text`
+    /// `p=presses c=canvas d=double r=right s=slider x=resets q=soft quits f=format t=text`
     func publish() {
-        window.title = "p=\(presses) c=\(canvasClicks) d=\(doubleClicks) r=\(rightClicks) s=\(Int(slider.doubleValue)) x=\(resets) f=\(format.titleOfSelectedItem ?? "") t=\(field.stringValue)"
+        window.title = "p=\(presses) c=\(canvasClicks) d=\(doubleClicks) r=\(rightClicks) s=\(Int(slider.doubleValue)) x=\(resets) q=\(quits) f=\(format.titleOfSelectedItem ?? "") t=\(field.stringValue)"
     }
 }
