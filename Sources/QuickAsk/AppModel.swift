@@ -92,6 +92,8 @@ final class AppModel: ObservableObject {
     }
     @Published var codexPath: String { didSet { preferences.set(codexPath, forKey: "codexPath") } }
     @Published var claudePath: String { didSet { preferences.set(claudePath, forKey: "claudePath") } }
+    /// The Mac that runs Herdr sessions, as an SSH target. Blank: this one.
+    @Published var herdrHost: String { didSet { preferences.set(herdrHost, forKey: "herdrHost") } }
     @Published var codexModel: String { didSet { preferences.set(codexModel, forKey: "codexModel") } }
     @Published var claudeModel: String { didSet { preferences.set(claudeModel, forKey: "claudeModel") } }
     @Published var codexEffort: String { didSet { preferences.set(codexEffort, forKey: "codexEffort") } }
@@ -127,6 +129,7 @@ final class AppModel: ObservableObject {
         provider = Provider(rawValue: preferences.string(forKey: "provider") ?? "claude") ?? .claude
         codexPath = preferences.string(forKey: "codexPath") ?? ""
         claudePath = preferences.string(forKey: "claudePath") ?? ""
+        herdrHost = preferences.string(forKey: "herdrHost") ?? ""
         codexModel = preferences.string(forKey: "codexModel") ?? ""
         claudeModel = preferences.string(forKey: "claudeModel") ?? ""
         codexEffort = preferences.string(forKey: "codexEffort") ?? ""
@@ -575,7 +578,9 @@ final class AppModel: ObservableObject {
     }
     func confirmHerdr() {
         guard !busy, let proposal = herdrProposal, !proposal.submissionAttempted else { return }
-        guard let executable = path(for: proposal.provider) else {
+        let host = HerdrHandoff.host(setting: herdrHost)
+        // Another Mac runs its own CLI, so this one doesn't need it installed.
+        guard let executable = host.isEmpty ? path(for: proposal.provider) : proposal.provider.rawValue else {
             herdrProposal?.direct = false; error = "\(proposal.provider.detail) is unavailable. Configure it in Settings."; return
         }
         let model = proposal.provider == .codex ? codexModel : claudeModel
@@ -592,7 +597,7 @@ final class AppModel: ObservableObject {
                 self.handoffInFlight = true; self.herdrProposal?.submissionAttempted = true
                 self.status = "Opening \(proposal.provider.title) in Herdr…"
                 let router = self.herdrRouter, root = self.herdrSessions
-                let result = try await Task.detached { try HerdrHandoff.launch(proposal, executable: executable, model: model, router: router, root: root) }.value
+                let result = try await Task.detached { try HerdrHandoff.launch(proposal, executable: executable, model: model, router: router, root: root, host: host) }.value
                 if result.confirmed {
                     self.messages.append(.init(role: "user", text: proposal.instruction))
                     self.messages.append(.init(role: "assistant", text: result.message))

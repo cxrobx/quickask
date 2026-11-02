@@ -1419,6 +1419,43 @@ struct ProviderTests {
         var invalidFolder = HerdrProposal.make(question: "Continue in Herdr", history: conversation, attachments: [], snapshot: nil, provider: .claude)
         invalidFolder.workspace = directory.appendingPathComponent("missing-folder").path
         check(rejected { _ = try HerdrHandoff.prepare(invalidFolder, executable: fakeCLI.path, model: "", root: sessionRoot) }, "A missing chosen folder is not replaced with a parent or home directory")
+        // The Mac that runs Herdr comes from the client: blank is this one, and one build serves both Macs.
+        check(HerdrHandoff.host(setting: "  ", environment: [:]) == "", "A blank Herdr host means this Mac")
+        check(HerdrHandoff.host(setting: " user@host ", environment: [HerdrHandoff.hostVariable: "other@host"]) == "user@host", "The Herdr host setting wins over an inherited value")
+        check(HerdrHandoff.host(setting: "", environment: [HerdrHandoff.hostVariable: "other@host"]) == "other@host", "A blank setting still honours an inherited Herdr host")
+        let onHost = try HerdrHandoff.prepare(invalidFolder, executable: "/not/on/this/mac/claude", model: "", root: sessionRoot, host: "user@host")
+        let hostScript = try String(contentsOf: onHost.launch, encoding: .utf8)
+        check(hostScript.contains("exec 'claude' ") && !hostScript.contains("/not/on/this/mac"), "A session on another Mac finds the CLI by name, not this Mac's path")
+        check(onHost.workingDirectory.path.hasSuffix("missing-folder"), "A folder only the other Mac has is left for the helper to check there")
+        let envRouter = directory.appendingPathComponent("fixture-env-herdr-router")
+        try #"""
+        #!/usr/bin/python3
+        import json,os,pathlib
+        pathlib.Path(__file__).with_suffix('.host').write_text(os.environ.get('CX_HERDR_HOST','<unset>'))
+        print(json.dumps({'workspace_id':'fixture-space','tab_id':'fixture-tab'}))
+        """#.write(to: envRouter, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: envRouter.path)
+        let seenHost = { try String(contentsOf: envRouter.deletingPathExtension().appendingPathExtension("host"), encoding: .utf8) }
+        let remoteChat = HerdrProposal.make(question: "Continue in Herdr", history: conversation, attachments: [], snapshot: nil, provider: .claude)
+        let remoteOpened = try HerdrHandoff.launch(remoteChat, executable: fakeCLI.path, model: "", router: envRouter.path, root: sessionRoot, host: "user@host")
+        let toldRemote = try seenHost()
+        check(toldRemote == "user@host" && remoteOpened.confirmed && remoteOpened.message.contains("Herdr on user@host"), "The helper is told which Mac runs Herdr, and the chat says so")
+        let localChat = HerdrProposal.make(question: "Continue in Herdr", history: conversation, attachments: [], snapshot: nil, provider: .claude)
+        let localOpened = try HerdrHandoff.launch(localChat, executable: fakeCLI.path, model: "", router: envRouter.path, root: sessionRoot)
+        let toldLocal = try seenHost()
+        check(toldLocal == "<unset>" && !localOpened.message.contains("Herdr on "), "A blank host leaves the helper on this Mac")
+        let hostRefused = directory.appendingPathComponent("fixture-host-refused-router")
+        try #"""
+        #!/usr/bin/python3
+        import json,sys
+        print(json.dumps({'message':'Couldn\'t reach user@host. Nothing was opened.'}))
+        print('raw traceback detail', file=sys.stderr)
+        sys.exit(1)
+        """#.write(to: hostRefused, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: hostRefused.path)
+        let refusedChat = HerdrProposal.make(question: "Continue in Herdr", history: conversation, attachments: [], snapshot: nil, provider: .claude)
+        let refused = try HerdrHandoff.launch(refusedChat, executable: fakeCLI.path, model: "", router: hostRefused.path, root: sessionRoot, host: "user@host")
+        check(!refused.confirmed && refused.message == "Couldn't reach user@host. Nothing was opened.", "The helper's sentence about the other Mac reaches the chat; its stderr doesn't")
         let failedRouter = directory.appendingPathComponent("fixture-failed-herdr-router")
         try "#!/bin/sh\nexit 1\n".write(to: failedRouter, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: failedRouter.path)

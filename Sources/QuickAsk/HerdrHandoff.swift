@@ -239,6 +239,13 @@ enum HerdrHandoff {
     /// That trust stops at each git repository inside it, which `ClaudeTrust` carries across before a session opens.
     static var generalFolder: URL { FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Projects", isDirectory: true) }
     static var sessionsDirectory: URL { FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/QuickAsk/Sessions", isDirectory: true) }
+    /// The environment variable that tells the helper which Mac runs Herdr: unset or empty is this one.
+    static let hostVariable = "CX_HERDR_HOST"
+    /// Where Herdr runs: Settings first, since a login item never sees the shell's environment, then an inherited value.
+    static func host(setting: String, environment: [String: String] = ProcessInfo.processInfo.environment) -> String {
+        let chosen = setting.trimmingCharacters(in: .whitespacesAndNewlines)
+        return chosen.isEmpty ? (environment[hostVariable] ?? "").trimmingCharacters(in: .whitespacesAndNewlines) : chosen
+    }
 
     /// My setup's offer to move a large build to Herdr: a last line `[[herdr: <instruction>]]`, which Quick Ask
     /// removes from the reply and turns into the review card. The only route to the card that you didn't ask for.
@@ -348,9 +355,12 @@ enum HerdrHandoff {
         guard lstat(url.path, &info) == 0, (info.st_mode & S_IFMT) == S_IFDIR, info.st_uid == getuid() else { throw DelegationError("The private session folder is unavailable.") }
         guard chmod(url.path, 0o700) == 0 else { throw DelegationError("The session folder could not be protected.") }
     }
-    static func prepare(_ proposal: HerdrProposal, executable: String, model: String, root: URL = sessionsDirectory, general: URL = generalFolder) throws -> PreparedHerdrSession {
+    /// `host`: another Mac runs the session, so its login shell finds the CLI, by name, and the helper checks the folder there.
+    static func prepare(_ proposal: HerdrProposal, executable: String, model: String, root: URL = sessionsDirectory, general: URL = generalFolder, host: String = "") throws -> PreparedHerdrSession {
         guard !proposal.needsTargetChoice else { throw DelegationError("Choose which document or folder this session should use.") }
-        guard FileManager.default.isExecutableFile(atPath: executable) else { throw DelegationError("\(proposal.provider.detail) is unavailable. Configure it in Settings.") }
+        let remote = !host.isEmpty
+        let executable = remote ? proposal.provider.rawValue : executable
+        guard remote || FileManager.default.isExecutableFile(atPath: executable) else { throw DelegationError("\(proposal.provider.detail) is unavailable. Configure it in Settings.") }
         let directory = root.appendingPathComponent(proposal.id.uuidString.lowercased(), isDirectory: true)
         let cwd: URL
         if proposal.workspace.isEmpty {
@@ -361,7 +371,7 @@ enum HerdrHandoff {
             guard proposal.workspace.hasPrefix("/") else { throw DelegationError("Choose an absolute working folder.") }
             cwd = URL(fileURLWithPath: proposal.workspace).resolvingSymlinksInPath().standardizedFileURL
             var isDirectory: ObjCBool = false
-            guard FileManager.default.fileExists(atPath: cwd.path, isDirectory: &isDirectory), isDirectory.boolValue else { throw DelegationError("The working folder is unavailable. Choose it again.") }
+            guard remote || (FileManager.default.fileExists(atPath: cwd.path, isDirectory: &isDirectory) && isDirectory.boolValue) else { throw DelegationError("The working folder is unavailable. Choose it again.") }
         }
         if let snapshot = proposal.snapshot {
             if snapshot.selection?.records["editing"] == "true" { throw DelegationError("Save and close the Onyx editor, then send a fresh transfer request.") }
@@ -394,11 +404,12 @@ enum HerdrHandoff {
         if proposal.workspace.isEmpty { args += ["--space", "Quick Ask", "--scope", "quickask:general"] }
         return args
     }
-    static func launch(_ proposal: HerdrProposal, executable: String, model: String, router: String = helperPath, root: URL = sessionsDirectory, general: URL = generalFolder) throws -> HerdrHandoffResult {
+    static func launch(_ proposal: HerdrProposal, executable: String, model: String, router: String = helperPath, root: URL = sessionsDirectory, general: URL = generalFolder, host: String = "") throws -> HerdrHandoffResult {
         launchLock.lock(); defer { launchLock.unlock() }
         guard FileManager.default.isExecutableFile(atPath: router) else { throw DelegationError("The cx-open-in-herdr helper is unavailable. Install the shared Herdr integration first.") }
-        let prepared = try prepare(proposal, executable: executable, model: model, root: root, general: general)
-        if proposal.provider == .claude { ClaudeTrust.extend(to: prepared.workingDirectory) }
+        let prepared = try prepare(proposal, executable: executable, model: model, root: root, general: general, host: host)
+        // Another Mac has its own trust file; the helper saves trust there.
+        if proposal.provider == .claude && host.isEmpty { ClaudeTrust.extend(to: prepared.workingDirectory) }
         let attempt = prepared.directory.appendingPathComponent("attempt.json")
         let fd = open(attempt.path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0o600)
         if fd < 0 {
@@ -420,18 +431,23 @@ enum HerdrHandoff {
         process.terminationHandler = { _ in finished.signal() }
         var environment = ProcessInfo.processInfo.environment
         for key in ["OPENAI_API_KEY", "CODEX_API_KEY", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY"] { environment.removeValue(forKey: key) }
+        environment[hostVariable] = host.isEmpty ? nil : host
         process.environment = environment
         var result = HerdrHandoffResult(confirmed: false, message: "Herdr did not confirm the handoff. Check its tabs before trying a new transfer; this proposal will not launch again.", workspaceID: nil, tabID: nil)
         do {
             try process.run()
             if finished.wait(timeout: .now() + 45) == .success {
                 try writer.synchronize()
+                let size = (try? FileManager.default.attributesOfItem(atPath: output.path)[.size] as? NSNumber)?.intValue ?? .max
+                let receipt = size < 32_000 ? (try? Data(contentsOf: output)).flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] } : nil
                 if process.terminationStatus == 0,
-                   let size = try? FileManager.default.attributesOfItem(atPath: output.path)[.size] as? NSNumber, size.intValue < 32_000,
-                   let data = try? Data(contentsOf: output), let receipt = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                   let workspace = receipt["workspace_id"] as? String, !workspace.isEmpty, workspace.count < 256,
-                   let tab = receipt["tab_id"] as? String, !tab.isEmpty, tab.count < 256 {
-                    result = .init(confirmed: true, message: "Opened a fresh \(proposal.provider.title) tab in Herdr in \((prepared.workingDirectory.path as NSString).abbreviatingWithTildeInPath) with this chat and your next instruction. No CXTasks task was created.", workspaceID: workspace, tabID: tab)
+                   let workspace = receipt?["workspace_id"] as? String, !workspace.isEmpty, workspace.count < 256,
+                   let tab = receipt?["tab_id"] as? String, !tab.isEmpty, tab.count < 256 {
+                    let place = host.isEmpty ? "Herdr" : "Herdr on \(host)"
+                    result = .init(confirmed: true, message: "Opened a fresh \(proposal.provider.title) tab in \(place) in \((prepared.workingDirectory.path as NSString).abbreviatingWithTildeInPath) with this chat and your next instruction. No CXTasks task was created.", workspaceID: workspace, tabID: tab)
+                // The helper's own sentence for a problem with the other Mac, never raw stderr.
+                } else if process.terminationStatus != 0, let message = receipt?["message"] as? String, !message.isEmpty, message.count < 400 {
+                    result = .init(confirmed: false, message: message, workspaceID: nil, tabID: nil)
                 }
             } else if process.isRunning { kill(process.processIdentifier, SIGKILL) }
         } catch { /* No raw helper errors or stderr enter the chat. */ }
