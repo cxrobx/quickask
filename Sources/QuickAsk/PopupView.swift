@@ -923,7 +923,8 @@ struct PopupView: View {
                     .textFieldStyle(.roundedBorder).font(appFont(size: 12))
                 TextField("Meeting Copilot MCP path · ~/Projects/meeting-copilot default", text: $model.meetingcopilotMCPPath)
                     .textFieldStyle(.roundedBorder).font(appFont(size: 12))
-                TextField("Herdr host · this Mac, or an SSH target like user@host", text: $model.herdrHost)
+                Text("Herdr host · blank runs sessions on this Mac").font(appFont(size: 11)).foregroundStyle(muted)
+                TextField("SSH target like user@host", text: $model.herdrHost)
                     .textFieldStyle(.roundedBorder).font(appFont(size: 12))
                     .accessibilityLabel("Herdr host")
                 if let milliseconds = model.routingMilliseconds, model.routingEngine != RoutingEngine.offTag {
