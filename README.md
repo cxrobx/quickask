@@ -69,6 +69,11 @@ Use **Change…** for overrides; it asks one question if the target is unclear. 
 the completed chat and recent images into a fresh Claude or Codex tab through
 the existing Herdr helper. This path works without CXTasks.
 
+**Herdr host** in Settings says which Mac runs those sessions: blank is this one,
+and an SSH target such as `user@host` is that Mac's Herdr, so one build works on
+both. Quick Ask passes it to the helper as `CX_HERDR_HOST`. There's no fallback: if
+that Mac is unreachable, or doesn't have the folder, nothing opens.
+
 | Action | Control |
 | --- | --- |
 | Show / hide | Option–Space or click the menu bar sparkle |
