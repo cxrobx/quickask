@@ -1,5 +1,18 @@
 # Validation
 
+## macOS 27 controls match macOS 26 (November 6, 2026)
+
+- Compared the same popup over the same window on the laptop (macOS 26.7.1) and
+  the mini (macOS 27.2), with matching glass settings. The pane and prompt box
+  rendered the same. The small `.clear` glass controls did not: 26 draws them as
+  smooth dark tinted shapes, 27 as milky glass with a bright rim, which washed
+  out the Claude chip's label.
+- On macOS 27 with Liquid Glass, the pills and round buttons are now painted
+  flat (dark wash, then the control's tint). macOS 26 and CX glass are unchanged.
+- Captured the real popup on the mini before and after: Control app, pin and
+  the Claude chip now match the laptop. The test suite's one failure (Onyx
+  search stemming) fails the same without this change.
+
 ## Image previews: Quick Look and full-size inline images (October 27, 2026)
 
 - Reply images were capped at 520×360 pt with the border drawn round that box, so a

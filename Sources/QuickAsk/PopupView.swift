@@ -14,7 +14,10 @@ private struct GlassPill: ViewModifier {
     let tint: Color
     let selected: Bool
     @ViewBuilder func body(content: Content) -> some View {
-        if #available(macOS 26.0, *), appearance.mode == .liquidGlass {
+        if appearance.flatControls {
+            content.background(FlatControlFill(shape: Capsule(), tint: selected ? tint.opacity(0.30) : nil, shade: 0.5))
+                .overlay(Capsule().strokeBorder(selected ? tint.opacity(0.35) : .white.opacity(0.08), lineWidth: 0.75))
+        } else if #available(macOS 26.0, *), appearance.mode == .liquidGlass {
             content.background(selected ? tint.opacity(0.10) : .clear, in: Capsule())
                 .glassEffect(.clear.tint(selected ? tint.opacity(0.28) : tint.opacity(0.03)).interactive(), in: Capsule())
                 .overlay(Capsule().strokeBorder(selected ? tint.opacity(0.35) : .white.opacity(0.08), lineWidth: 0.75))
@@ -53,12 +56,30 @@ private struct ComposerSurface: ViewModifier {
     }
 }
 
+/// macOS 27 draws small `.clear` glass controls as milky, brightly rimmed glass,
+/// where macOS 26 draws them as smooth dark tinted shapes over the pane. This
+/// paints the macOS 26 look directly: a dark wash, then the control's tint.
+private struct FlatControlFill<S: Shape>: View {
+    let shape: S
+    let tint: Color?
+    let shade: Double
+    var body: some View {
+        ZStack {
+            shape.fill(Color.black.opacity(shade))
+            if let tint { shape.fill(tint) }
+        }
+    }
+}
+
 /// Round glass button, like Control Center's module buttons.
 private struct GlassCircle: ViewModifier {
     let appearance: GlassAppearance
     var tint: Color? = nil
     @ViewBuilder func body(content: Content) -> some View {
-        if #available(macOS 26.0, *), appearance.mode == .liquidGlass {
+        if appearance.flatControls {
+            content.background(FlatControlFill(shape: Circle(), tint: tint, shade: tint == nil ? 0.5 : 0.2))
+                .overlay(Circle().strokeBorder(.white.opacity(0.08), lineWidth: 0.75))
+        } else if #available(macOS 26.0, *), appearance.mode == .liquidGlass {
             content.glassEffect(.clear.tint(tint).interactive(), in: Circle())
         } else if let tint {
             content.background(tint, in: Circle())
