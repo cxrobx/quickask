@@ -41,6 +41,9 @@ private struct ComposerSurface: ViewModifier {
                         .overlay(shape.fill(Color.black.opacity(appearance.darkComposer ? 0.32 : 0)))
                 }
                 .overlay(shape.strokeBorder(appearance.rim, lineWidth: 1))
+            } else if appearance.darkComposer && appearance.flatControls {
+                content.background(FlatControlFill(shape: shape, tint: nil, shade: 0.32))
+                    .overlay(shape.strokeBorder(appearance.rim, lineWidth: 1))
             } else if appearance.darkComposer {
                 content.glassEffect(.clear.tint(.black.opacity(0.32)), in: shape)
                     .overlay(shape.strokeBorder(appearance.rim, lineWidth: 1))
@@ -56,9 +59,11 @@ private struct ComposerSurface: ViewModifier {
     }
 }
 
-/// macOS 27 draws small `.clear` glass controls as milky, brightly rimmed glass,
-/// where macOS 26 draws them as smooth dark tinted shapes over the pane. This
-/// paints the macOS 26 look directly: a dark wash, then the control's tint.
+/// Nested `.clear` glass (controls, bubbles) has two looks. macOS 26 draws it as
+/// smooth dark tinted shapes while QuickAsk is the active app, and as lit, rimmed
+/// glass while inactive (why a summon forces activation). macOS 27 always draws
+/// the lit look, active or not. This paints the active look directly: a dark
+/// wash, then the element's tint.
 private struct FlatControlFill<S: Shape>: View {
     let shape: S
     let tint: Color?
@@ -101,7 +106,10 @@ private struct MessageBubble: ViewModifier {
                                            bottomTrailingRadius: user ? 5 : 17, topTrailingRadius: 17, style: .continuous)
         let padded = content.padding(.horizontal, 13).padding(.vertical, 9)
         let rim = (tint ?? .white).opacity(tint == nil ? 0.16 : 0.32)
-        if #available(macOS 26.0, *), appearance.mode == .liquidGlass {
+        if appearance.flatControls {
+            padded.background(FlatControlFill(shape: shape, tint: tint?.opacity(0.30), shade: 0.5))
+                .overlay(shape.strokeBorder(rim, lineWidth: 0.75))
+        } else if #available(macOS 26.0, *), appearance.mode == .liquidGlass {
             padded.glassEffect(.clear.tint(tint?.opacity(0.22)), in: shape)
                 .overlay(shape.strokeBorder(rim, lineWidth: 0.75))
         } else {

@@ -126,8 +126,8 @@ final class GlassAppearance: ObservableObject {
         refresh()
     }
 
-    /// macOS 27 renders small clear-glass controls as milky glass with a bright rim
-    /// (unlike 26's smooth dark shapes), so on 27 the controls are painted flat.
+    /// macOS 27 draws nested clear glass in its lit, rimmed (inactive-app) look even
+    /// while QuickAsk is active, so there controls and bubbles are painted flat.
     var flatControls: Bool { mode == .liquidGlass && ProcessInfo.processInfo.operatingSystemVersion.majorVersion >= 27 }
     var effectiveTransparency: Double { reduceTransparency ? 0 : transparency }
     var modeTitle: String { reduceTransparency ? "Solid · Reduce Transparency" : mode.title }

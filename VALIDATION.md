@@ -7,8 +7,14 @@
   rendered the same. The small `.clear` glass controls did not: 26 draws them as
   smooth dark tinted shapes, 27 as milky glass with a bright rim, which washed
   out the Claude chip's label.
-- On macOS 27 with Liquid Glass, the pills and round buttons are now painted
-  flat (dark wash, then the control's tint). macOS 26 and CX glass are unchanged.
+- Root cause: nested `.clear` glass on macOS 26 is smooth and dark while
+  QuickAsk is the active app and lit/rimmed ("3D") while inactive, which is why
+  5dd5243 forces activation on summon. Running the laptop's byte-identical
+  binary on the mini, with matching settings, showed the lit look both inactive
+  and active (`isActive true`): macOS 27 no longer switches on activation.
+- On macOS 27 with Liquid Glass, the pills, round buttons, message bubbles and
+  the darker prompt box are painted flat (dark wash, then the tint). macOS 26
+  and CX glass are unchanged.
 - Captured the real popup on the mini before and after: Control app, pin and
   the Claude chip now match the laptop. The test suite's one failure (Onyx
   search stemming) fails the same without this change.
