@@ -252,15 +252,12 @@ struct ProviderTests {
             context.textPosition = CGPoint(x: 72, y: 700); CTLineDraw(line, context)
             context.endPDFPage()
         }
+        // The table of contents is written by Core Graphics as the file is made. On macOS 27,
+        // PDFKit silently drops an outline added to a document that had none when it saves.
+        let contents: [[String: Any]] = [["Title": "Animation", "Destination": 1], ["Title": "Delivery", "Destination": 2]]
+        CGPDFContextSetOutline(context, ["Children": contents] as CFDictionary)
         context.closePDF()
-        let document = PDFDocument(url: pdfURL)!
-        let outline = PDFOutline()
-        for (index, title) in ["Animation", "Delivery"].enumerated() {
-            let entry = PDFOutline(); entry.label = title; entry.destination = PDFDestination(page: document.page(at: index)!, at: .zero)
-            outline.insertChild(entry, at: index)
-        }
-        document.outlineRoot = outline
-        check(document.write(to: pdfURL), "Test manual written")
+        check(PDFDocument(url: pdfURL)?.outlineRoot?.numberOfChildren == 2, "Test manual written with its table of contents")
         try "<html><head><title>Mixer</title><style>p{}</style></head><body><h1>Mixer</h1><p>Route a channel to a bus &amp; adjust its fader.</p></body></html>"
             .write(to: app.manualFolder.appendingPathComponent("mixer.html"), atomically: true, encoding: .utf8)
         let index = ManualIndex(app)
