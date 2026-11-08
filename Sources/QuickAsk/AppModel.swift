@@ -30,7 +30,7 @@ final class AppModel: ObservableObject {
     /// `/fork` and `!cd` act on the chat, not in it, so they wait in the draft for the answer to end.
     var canQueue: Bool {
         guard let run = runs[activeSessionID], run.routing == nil, delegation == nil, herdrProposal == nil,
-              Self.forkTitle(in: draft) == nil, Self.cdTarget(in: draft) == nil else { return false }
+              Self.forkTitle(in: draft) == nil, Self.cdTarget(in: draft) == nil, !Self.isSettle(draft) else { return false }
         return !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty
     }
     /// Whether any tab has a request in flight.
@@ -158,6 +158,7 @@ final class AppModel: ObservableObject {
     }
 
     func send() {
+        if Self.isSettle(draft) { settle(); return }
         if busy { enqueue(); return }
         // Anything still queued (its answer ended while you were typing, or in another tab) goes first.
         if let items = queued.removeValue(forKey: activeSessionID) { mergeIntoDraft(items) }
@@ -1319,6 +1320,25 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// "/settle" sent as the whole message, nothing after it.
+    nonisolated static func isSettle(_ text: String) -> Bool { command("/settle", in: text) == "" }
+
+    /// The answer each chat was settled on, so a follow-up verdict still on its way for that
+    /// same answer can't put the ring back. The next answer is judged afresh.
+    private var settledAnswer: [UUID: UUID] = [:]
+
+    /// `/settle`: this chat no longer needs you. Clears its "still on me" ring and unread mark,
+    /// so it drops off the Stream Deck's On you until a new answer lands. Not a message.
+    func settle() {
+        let id = activeSessionID
+        draft = ""; focusToken += 1
+        guard runs[id] == nil else { status = "Wait for this answer to finish, then /settle."; return }
+        if let last = messages.last?.id { settledAnswer[id] = last }
+        let wasOnYou = marks.stillOnMe.contains(id) || marks.unread.contains(id)
+        updateMarks { $0.stillOnMe.remove(id); $0.unread.remove(id) }
+        status = wasOnYou ? "Settled. It's off the Stream Deck until its next answer." : "Settled. Nothing was on you here."
+    }
+
     /// Marks a chat you've read but still have to act on, or clears that mark.
     func toggleStillOnMe(_ id: UUID) {
         updateMarks { if $0.stillOnMe.remove(id) == nil { $0.stillOnMe.insert(id) } }
@@ -1340,7 +1360,7 @@ final class AppModel: ObservableObject {
             guard let onYou = await judge(question, answer.text), let self else { return }
             var last: UUID?
             self.withMessages(of: id) { last = $0.last?.id }
-            guard (last ?? self.savedMessages[id]?.last?.id) == answer.id else { return }
+            guard (last ?? self.savedMessages[id]?.last?.id) == answer.id, self.settledAnswer[id] != answer.id else { return }
             self.updateMarks { if onYou { $0.stillOnMe.insert(id) } else { $0.stillOnMe.remove(id) } }
         }
     }

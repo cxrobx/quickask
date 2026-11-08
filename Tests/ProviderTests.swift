@@ -1180,6 +1180,10 @@ struct ProviderTests {
         check(ComposerTextView.commandRange(in: " /tc claim") == NSRange(location: 1, length: 3) && ComposerTextView.commandRange(in: "/truthcheck") == NSRange(location: 0, length: 11), "The composer marks /truthcheck and /tc")
         check(ComposerTextView.completion(for: "/") == "truthcheck" && ComposerTextView.completion(for: "/f") == "ork" && ComposerTextView.completion(for: "/TR") == "uthcheck", "Typing / offers the rest of a command")
         check(ComposerTextView.completion(for: "/fork") == nil && ComposerTextView.completion(for: "/x") == nil && ComposerTextView.completion(for: "/t a") == nil && ComposerTextView.completion(for: "hi /") == nil, "No completion once the command is whole or the draft isn't one")
+        // /settle: clears the chat's ring for the Stream Deck; only the bare whole-message command counts.
+        check(AppModel.isSettle("/settle") && AppModel.isSettle("  /SETTLE "), "A bare /settle settles")
+        for phrase in ["/settled", "/settle this later", "should I /settle?", "settle", "/set"] { check(!AppModel.isSettle(phrase), "Not a settle command: \(phrase)") }
+        check(ComposerTextView.commandRange(in: "/settle") == NSRange(location: 0, length: 7) && ComposerTextView.completion(for: "/s") == "ettle", "The composer marks and completes /settle")
         // !cd: points the chat at a folder; only the whole-message command counts.
         check(AppModel.cdTarget(in: "!cd /Users/x/Projects/app") == "/Users/x/Projects/app" && AppModel.cdTarget(in: " !CD  ~/a b ") == "~/a b", "!cd takes the path after it")
         check(AppModel.cdTarget(in: "!cd") == "" && AppModel.cdTarget(in: "!cdx") == nil && AppModel.cdTarget(in: "run !cd later") == nil && AppModel.cdTarget(in: "!ls") == nil, "Only the whole-message !cd is a folder change")

@@ -568,6 +568,14 @@ struct PopupView: View {
                         .background(Color.white.opacity(0.06), in: Capsule())
                         .help("This chat runs from \(directory.path). Send !cd to go back to your home folder.")
                 }
+                if AppModel.isSettle(model.draft) {
+                    Label("Return settles this chat: off the Stream Deck until its next answer", systemImage: "checkmark.circle")
+                        .font(appFont(size: 11, weight: .medium)).foregroundStyle(accent).lineLimit(1)
+                        .padding(.horizontal, 8).padding(.vertical, 4)
+                        .background(accent.opacity(0.10), in: Capsule())
+                        .overlay(Capsule().strokeBorder(accent.opacity(0.3)))
+                        .transition(.opacity)
+                }
                 if let title = AppModel.forkTitle(in: model.draft) {
                     // A harness command, not a message: say what Return will do.
                     Label(title.isEmpty ? "Return forks this chat into a new tab" : "Return forks into “\(title)”", systemImage: "arrow.triangle.branch")
@@ -1310,12 +1318,12 @@ final class ComposerTextView: NSTextView {
     static let commandColor = NSColor(red: 0.76, green: 0.89, blue: 0.79, alpha: 1)
 
     /// Commands the composer completes after "/", in the order a bare "/" offers them.
-    nonisolated static let commands = ["/truthcheck", "/fork", "!cd"]
+    nonisolated static let commands = ["/truthcheck", "/fork", "/settle", "!cd"]
 
     /// Where the command sits when the draft is one (the same tests send uses), so it can be
     /// drawn as a command rather than as words to the model.
     nonisolated static func commandRange(in text: String) -> NSRange? {
-        guard AppModel.forkTitle(in: text) != nil || AppModel.truthTarget(in: text) != nil || AppModel.cdTarget(in: text) != nil else { return nil }
+        guard AppModel.forkTitle(in: text) != nil || AppModel.truthTarget(in: text) != nil || AppModel.cdTarget(in: text) != nil || AppModel.isSettle(text) else { return nil }
         let leading = text.prefix { $0.isWhitespace }
         let name = text.dropFirst(leading.count).prefix { !$0.isWhitespace }
         return NSRange(location: leading.utf16.count, length: name.utf16.count)
