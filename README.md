@@ -67,7 +67,10 @@ say “let's transfer this session to Herdr and have it do X.” Quick Ask infer
 action, provider, and folder and shows a small confirmation inside the chat.
 Use **Change…** for overrides; it asks one question if the target is unclear. It carries
 the completed chat and recent images into a fresh Claude or Codex tab through
-the existing Herdr helper. This path works without CXTasks.
+the shared Herdr helper, `cx-open-in-herdr`. Install it once with
+`bash integrations/herdr/install.sh`, which copies it to `~/.local/bin`; see
+[integrations/herdr](integrations/herdr/README.md). This path works without
+CXTasks.
 
 **Herdr host** in Settings says which Mac runs those sessions: blank is this one,
 and an SSH target such as `user@host` is that Mac's Herdr, so one build works on

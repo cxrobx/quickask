@@ -406,7 +406,7 @@ enum HerdrHandoff {
     }
     static func launch(_ proposal: HerdrProposal, executable: String, model: String, router: String = helperPath, root: URL = sessionsDirectory, general: URL = generalFolder, host: String = "") throws -> HerdrHandoffResult {
         launchLock.lock(); defer { launchLock.unlock() }
-        guard FileManager.default.isExecutableFile(atPath: router) else { throw DelegationError("The cx-open-in-herdr helper is unavailable. Install the shared Herdr integration first.") }
+        guard FileManager.default.isExecutableFile(atPath: router) else { throw DelegationError("The cx-open-in-herdr helper isn't installed. Run integrations/herdr/install.sh from the Quick Ask repo first.") }
         let prepared = try prepare(proposal, executable: executable, model: model, root: root, general: general, host: host)
         // Another Mac has its own trust file; the helper saves trust there.
         if proposal.provider == .claude && host.isEmpty { ClaudeTrust.extend(to: prepared.workingDirectory) }
