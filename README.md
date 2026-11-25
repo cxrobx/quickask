@@ -3,6 +3,10 @@
 A native macOS menu bar assistant. Press **Option–Space**, ask a question, and
 choose **Codex** or **Claude**, using your existing CLI logins.
 
+![QuickAsk answering about the active window and controlling the app in the background — app replica, seeded demo data](docs/media/quickask-demo.gif)
+
+<sub>App replica with seeded demo data. [Watch the full 40-second overview with sound](https://cxventures.io/products/quickask).</sub>
+
 ## Run
 
 Open `dist/QuickAsk.app` (or the supplied release app). It lives in the menu bar and opens the popup on
